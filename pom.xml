@@ -16,7 +16,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spring-boot.version>3.2.0</spring-boot.version>
         <netty.version>4.1.100.Final</netty.version>
-        <jnbt.version>1.4.1</jnbt.version> <!-- Added jnbt.version -->
+        <!-- <jnbt.version>1.4.1</jnbt.version> --> <!-- Removed jnbt.version as per new instructions -->
         <adventure-api.version>4.14.0</adventure-api.version>
         <gson.version>2.10.1</gson.version>
     </properties>
@@ -42,12 +42,7 @@
             <version>${netty.version}</version>
         </dependency>
 
-        <!-- JNBT (Java NBT Library) -->
-        <dependency>
-            <groupId>org.jnbt</groupId>
-            <artifactId>jnbt</artifactId>
-            <version>${jnbt.version}</version>
-        </dependency>
+        <!-- JNBT (Java NBT Library) dependency removed as per new instructions -->
 
 
         <!-- Adventure API -->
