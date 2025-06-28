@@ -13,7 +13,10 @@ import net.kyori.adventure.text.serializer.gson.GsonComponentSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.oblivion.neoproxy.config.ListenerConfig;
-import com.oblivion.neoproxy.config.ProxyConfig; // Added import
+import com.oblivion.neoproxy.config.ProxyConfig;
+import com.oblivion.neoproxy.config.ConfigManager; // Added
+import com.oblivion.neoproxy.server.BackendServerManager; // Added
+import io.netty.channel.EventLoopGroup; // Added
 
 import java.nio.charset.StandardCharsets;
 
@@ -24,22 +27,38 @@ public class ServerListPingHandler extends ChannelInboundHandlerAdapter {
 
     // Configuration will be injected
     private final ListenerConfig listenerConfig;
-    private final ProxyConfig proxyConfig; // To potentially get global settings if needed
+    private final ProxyConfig proxyConfig;
+    private final ConfigManager configManager;
+    private final BackendServerManager backendServerManager;
+    private final EventLoopGroup backendWorkerGroup;
+
 
     // Constants related to Minecraft protocol version, can be static or derived if needed
     private static final String SERVER_VERSION_NAME_PREFIX = "NeoProxy "; // e.g., "NeoProxy 1.20.4"
     private static final int MINECRAFT_PROTOCOL_VERSION = 765; // For Minecraft 1.20.4
 
-    public ServerListPingHandler(ListenerConfig listenerConfig, ProxyConfig proxyConfig) {
+    public ServerListPingHandler(ListenerConfig listenerConfig, ProxyConfig proxyConfig,
+                                 ConfigManager configManager, BackendServerManager backendServerManager, EventLoopGroup backendWorkerGroup) {
         this.listenerConfig = listenerConfig;
         this.proxyConfig = proxyConfig;
+        this.configManager = configManager;
+        this.backendServerManager = backendServerManager;
+        this.backendWorkerGroup = backendWorkerGroup;
+
         if (this.listenerConfig == null) {
             LOGGER.error("CRITICAL: ServerListPingHandler initialized with null ListenerConfig!");
-            // Consider throwing an IllegalArgumentException or having a fallback,
-            // but NeoProxyApplication should prevent this.
         }
-         if (this.proxyConfig == null) {
+        if (this.proxyConfig == null) {
             LOGGER.error("CRITICAL: ServerListPingHandler initialized with null ProxyConfig!");
+        }
+        if (this.configManager == null) {
+            LOGGER.error("CRITICAL: ServerListPingHandler initialized with null ConfigManager!");
+        }
+        if (this.backendServerManager == null) {
+            LOGGER.error("CRITICAL: ServerListPingHandler initialized with null BackendServerManager!");
+        }
+        if (this.backendWorkerGroup == null) {
+            LOGGER.error("CRITICAL: ServerListPingHandler initialized with null BackendWorkerGroup!");
         }
     }
 
@@ -125,7 +144,14 @@ public class ServerListPingHandler extends ChannelInboundHandlerAdapter {
         } else if (nextStateValue == 2) { // Login
             ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(ConnectionState.LOGIN);
             LOGGER.info("[{}] Connection ({}) transitioned to LOGIN state. Replacing ServerListPingHandler with InitialLoginHandler.", channelId, ctx.channel().remoteAddress());
-            ctx.pipeline().replace(this, "initialLoginHandler", new InitialLoginHandler(this.proxyConfig, this.listenerConfig));
+            ctx.pipeline().replace(this, "initialLoginHandler",
+                new InitialLoginHandler(
+                    this.proxyConfig,
+                    this.listenerConfig,
+                    this.configManager,
+                    this.backendServerManager,
+                    this.backendWorkerGroup
+                ));
         } else {
             LOGGER.warn("[{}] Invalid Next State value: {}. Closing connection.", channelId, nextStateValue);
             ctx.close();

@@ -2,13 +2,17 @@
 /app/src/main/java/com/oblivion/neoproxy/NeoProxyApplication.java
 /app/src/main/java/com/oblivion/neoproxy/config/ProxyConfig.java
 /app/src/main/java/com/oblivion/neoproxy/network/handler/InitialLoginHandler.java
+/app/src/main/java/com/oblivion/neoproxy/server/BackendConnection.java
 /app/src/main/java/com/oblivion/neoproxy/config/ConfigManager.java
 /app/src/main/java/com/oblivion/neoproxy/config/ServerInfo.java
 /app/src/main/java/com/oblivion/neoproxy/config/ListenerConfig.java
+/app/src/main/java/com/oblivion/neoproxy/player/PlayerSession.java
 /app/src/main/java/com/oblivion/neoproxy/server/BackendServerManager.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/PacketEncoder.java
 /app/src/main/java/com/oblivion/neoproxy/network/handler/ServerListPingHandler.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/ConnectionState.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/Packet.java
 /app/src/main/java/com/oblivion/neoproxy/network/handler/NettyChannelAttributes.java
+/app/src/main/java/com/oblivion/neoproxy/player/ProxyPlayer.java
+/app/src/main/java/com/oblivion/neoproxy/network/handler/ClientForwardingHandler.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/VarIntUtil.java

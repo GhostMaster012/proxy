@@ -16,7 +16,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import com.oblivion.neoproxy.config.ConfigManager;
 import com.oblivion.neoproxy.config.ListenerConfig;
-import com.oblivion.neoproxy.network.handler.ServerListPingHandler; // Import added
+import com.oblivion.neoproxy.network.handler.ServerListPingHandler;
+import com.oblivion.neoproxy.server.BackendServerManager; // Added import
 
 @SpringBootApplication
 public class NeoProxyApplication {
@@ -27,12 +28,31 @@ public class NeoProxyApplication {
     @Autowired
     private ConfigManager configManager;
 
+    @Autowired
+    private BackendServerManager backendServerManager; // Autowire BackendServerManager
+
+    // To be used by backend connections
+    private EventLoopGroup backendWorkerGroup;
+
+
     public static void main(String[] args) {
         SpringApplication.run(NeoProxyApplication.class, args);
     }
 
     @Bean
     public CommandLineRunner nettyServerRunner() {
+        // Initialize backend worker group here, before the lambda uses it.
+        // It needs to be shut down gracefully with the application.
+        backendWorkerGroup = new NioEventLoopGroup();
+
+        // Ensure graceful shutdown of the backendWorkerGroup
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (backendWorkerGroup != null && !backendWorkerGroup.isShuttingDown()) {
+                LOGGER.info("Shutting down backend Netty worker group.");
+                backendWorkerGroup.shutdownGracefully();
+            }
+        }));
+
         return args -> {
             ListenerConfig listenerConfig = configManager.getDefaultListener();
             if (listenerConfig == null) {
@@ -60,8 +80,15 @@ public class NeoProxyApplication {
                          // Pipeline for handling Minecraft protocol
                          ch.pipeline().addLast("packetDecoder", new com.oblivion.neoproxy.protocol.PacketDecoder());
                          ch.pipeline().addLast("packetEncoder", new com.oblivion.neoproxy.protocol.PacketEncoder());
-                         // Pass ListenerConfig to ServerListPingHandler
-                         ch.pipeline().addLast("serverListPingHandler", new ServerListPingHandler(listenerConfig, configManager.getConfiguration()));
+                         // Pass ListenerConfig, ProxyConfig, and managers/group to ServerListPingHandler
+                         ch.pipeline().addLast("serverListPingHandler",
+                             new ServerListPingHandler(
+                                 listenerConfig,
+                                 configManager.getConfiguration(),
+                                 configManager,            // Pass ConfigManager
+                                 backendServerManager,     // Pass BackendServerManager
+                                 backendWorkerGroup        // Pass backend EventLoopGroup
+                             ));
                      }
                  });
 
