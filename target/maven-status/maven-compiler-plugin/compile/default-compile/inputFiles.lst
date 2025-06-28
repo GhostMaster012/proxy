@@ -2,7 +2,7 @@
 /app/src/main/java/com/oblivion/neoproxy/NeoProxyApplication.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/PacketEncoder.java
 /app/src/main/java/com/oblivion/neoproxy/network/handler/ServerListPingHandler.java
-/app/src/main/java/com/oblivion/neoproxy/protocol/Packet.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/ConnectionState.java
+/app/src/main/java/com/oblivion/neoproxy/protocol/Packet.java
 /app/src/main/java/com/oblivion/neoproxy/network/handler/NettyChannelAttributes.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/VarIntUtil.java
