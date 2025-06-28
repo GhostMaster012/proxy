@@ -219,26 +219,40 @@ public class BackendConnection {
                     return;
 
                 } else if (packetId == 0x03) { // Set Compression (Backend)
-                    packet.skipBytes(VarIntUtil.getVarIntSize(packetId)); // Skip packet ID VarInt
-                    int threshold = VarIntUtil.readVarInt(packet);
-                    LOGGER.info("Received Set Compression (0x03) from backend {} for player {} (threshold: {}).",
+                    // packet.skipBytes(VarIntUtil.getVarIntSize(packetId)); // Already skipped by resetReaderIndex logic below
+                    // int threshold = VarIntUtil.readVarInt(packet); // Original position before correction
+                    // LOGGER.info("Received Set Compression (0x03) from backend {} for player {} (threshold: {}).",
+                    //             serverAddress, playerSession.getPlayer().getUsername(), threshold);
+
+                    packet.resetReaderIndex(); // Go back to start of packet (ID + Data)
+                    packet.skipBytes(VarIntUtil.getVarIntSize(packetId)); // Skip the Packet ID itself
+                    int threshold = VarIntUtil.readVarInt(packet); // Now read the threshold
+
+                    LOGGER.info("Received Set Compression (0x03) from backend {} for player {} (threshold: {}). Enabling compression.",
                                 serverAddress, playerSession.getPlayer().getUsername(), threshold);
 
-                    // TODO: CRITICAL - Implement compression handling in the pipeline.
-                    // If threshold >= 0, enable compression.
-                    // Need to add Netty's JdkZlibEncoder/Decoder or custom Minecraft-aware compressors.
-                    // For example, after PacketEncoder: new JdkZlibEncoder(true)
-                    // Before PacketDecoder: new JdkZlibDecoder(true)
-                    // This needs careful placement and potentially custom logic for Minecraft's VarInt length prefix on compressed data.
-                    LOGGER.warn("COMPRESSION HANDLING NOT IMPLEMENTED for backend connection of player {}. Subsequent packets might be misinterpreted if backend expects compression.",
-                                playerSession.getPlayer().getUsername());
+                    if (threshold >= 0) {
+                        // Dynamically add compressor and decompressor to the pipeline
+                        // Decompressor goes after the initial framing PacketDecoder
+                        ctx.pipeline().addAfter("packetDecoder", "minecraftDecompressor",
+                                                new com.oblivion.neoproxy.protocol.compression.MinecraftPacketDecompressor(threshold));
+                        // Compressor goes before the final framing PacketEncoder
+                        ctx.pipeline().addBefore("packetEncoder", "minecraftCompressor",
+                                                 new com.oblivion.neoproxy.protocol.compression.MinecraftPacketCompressor(threshold));
+                        LOGGER.info("Compression handlers added to pipeline for backend connection of player {}.",
+                                    playerSession.getPlayer().getUsername());
+                    } else {
+                        // Threshold < 0 typically means disable compression, though usually servers don't send this after enabling.
+                        // If it means disable, we might need to remove handlers if they were added.
+                        LOGGER.warn("Received Set Compression with negative threshold ({}) for player {}. Compression not enabled/changed.",
+                                    threshold, playerSession.getPlayer().getUsername());
+                    }
 
-                    // The Set Compression packet from backend IS NOT forwarded to the client if client compression is handled separately or not at all by proxy yet.
-                    // If client also needs compression, proxy would send its own Set Compression.
-                    packet.release();
+                    packet.release(); // Consume the Set Compression packet, do not forward
                     return;
                 } else if (packetId == 0x00 && packet.readableBytes() > 0) { // Disconnect (Login)
-                     packet.skipBytes(VarIntUtil.getVarIntSize(packetId));
+                     packet.resetReaderIndex(); // Ensure we are at the start of the packet payload
+                     packet.skipBytes(VarIntUtil.getVarIntSize(packetId)); // Skip packet ID
                      String reason = VarIntUtil.readString(packet);
                      LOGGER.warn("Backend {} disconnected player {} during login: {}", serverAddress, playerSession.getPlayer().getUsername(), reason);
                      playerSession.disconnect("Backend error: " + reason);

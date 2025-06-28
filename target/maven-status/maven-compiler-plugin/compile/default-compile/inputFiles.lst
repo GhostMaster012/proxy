@@ -10,9 +10,11 @@
 /app/src/main/java/com/oblivion/neoproxy/server/BackendServerManager.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/PacketEncoder.java
 /app/src/main/java/com/oblivion/neoproxy/network/handler/ServerListPingHandler.java
+/app/src/main/java/com/oblivion/neoproxy/protocol/compression/MinecraftPacketCompressor.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/ConnectionState.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/Packet.java
 /app/src/main/java/com/oblivion/neoproxy/network/handler/NettyChannelAttributes.java
 /app/src/main/java/com/oblivion/neoproxy/player/ProxyPlayer.java
+/app/src/main/java/com/oblivion/neoproxy/protocol/compression/MinecraftPacketDecompressor.java
 /app/src/main/java/com/oblivion/neoproxy/network/handler/ClientForwardingHandler.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/VarIntUtil.java
