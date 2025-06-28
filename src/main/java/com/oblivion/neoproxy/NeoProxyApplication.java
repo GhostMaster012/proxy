@@ -62,7 +62,6 @@ public class NeoProxyApplication {
                          ch.pipeline().addLast("packetEncoder", new com.oblivion.neoproxy.protocol.PacketEncoder());
                          // Pass ListenerConfig to ServerListPingHandler
                          ch.pipeline().addLast("serverListPingHandler", new ServerListPingHandler(listenerConfig, configManager.getConfiguration()));
-                         LOGGER.info("Client connected: {} with pipeline configured.", ch.remoteAddress());
                      }
                  });
 

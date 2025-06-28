@@ -33,20 +33,16 @@ public class PacketEncoder extends MessageToByteEncoder<Object> {
         if (msg instanceof ByteBuf) {
             ByteBuf data = (ByteBuf) msg;
             int dataLength = data.readableBytes();
-            LOGGER.debug("[{}] Encoding ByteBuf message. Data length: {}. Current state: {}, Protocol: {}",
-                         channelId, dataLength, currentState, protocolVersion);
+            // LOGGER.debug("[{}] Encoding ByteBuf message. Data length: {}. Current state: {}, Protocol: {}", // Removed DEBUG
+            //              channelId, dataLength, currentState, protocolVersion);
 
             VarIntUtil.writeVarInt(out, dataLength); // Length of (PacketID + Data)
             out.writeBytes(data);
-            LOGGER.debug("[{}] ByteBuf message encoded. Total bytes written to output buffer (including length prefix): {}",
-                         channelId, VarIntUtil.getVarIntSize(dataLength) + dataLength);
-            // Netty will release 'data' if it's a direct buffer and it's responsible.
-            // If 'data' was allocated by a handler (e.g. ctx.alloc().buffer()),
-            // the handler might release it, or Netty's writeAndFlush handles it.
-            // For safety, assume Netty handles release of 'data' after it's written to 'out' or by writeAndFlush.
+            // LOGGER.debug("[{}] ByteBuf message encoded. Total bytes written to output buffer (including length prefix): {}", // Removed DEBUG
+            //              channelId, VarIntUtil.getVarIntSize(dataLength) + dataLength);
         } else if (msg instanceof Packet) {
-            LOGGER.debug("[{}] Encoding Packet message of type {}. Current state: {}, Protocol: {}",
-                         channelId, msg.getClass().getSimpleName(), currentState, protocolVersion);
+            // LOGGER.debug("[{}] Encoding Packet message of type {}. Current state: {}, Protocol: {}", // Removed DEBUG
+            //              channelId, msg.getClass().getSimpleName(), currentState, protocolVersion);
             Packet packet = (Packet) msg;
             ByteBuf packetBody = ctx.alloc().buffer(); // Buffer for Packet ID + Data
             try {
@@ -57,11 +53,11 @@ public class PacketEncoder extends MessageToByteEncoder<Object> {
                 int bodyLength = packetBody.readableBytes();
                 VarIntUtil.writeVarInt(out, bodyLength); // Total length of (PacketID + Data)
                 out.writeBytes(packetBody);
-                LOGGER.debug("[{}] Packet message {} encoded. Packet ID: {}, Body length: {}. Total bytes written: {}",
-                             channelId, msg.getClass().getSimpleName(), packetId, bodyLength, VarIntUtil.getVarIntSize(bodyLength) + bodyLength);
+                // LOGGER.debug("[{}] Packet message {} encoded. Packet ID: {}, Body length: {}. Total bytes written: {}", // Removed DEBUG
+                //              channelId, msg.getClass().getSimpleName(), packetId, bodyLength, VarIntUtil.getVarIntSize(bodyLength) + bodyLength);
             } finally {
                 packetBody.release();
-                LOGGER.trace("[{}] Released temporary packetBody buffer for Packet message.", channelId);
+                // LOGGER.trace("[{}] Released temporary packetBody buffer for Packet message.", channelId); // Removed TRACE
             }
         } else {
             LOGGER.error("[{}] Unsupported message type for encoding: {}", channelId, msg.getClass().getName());

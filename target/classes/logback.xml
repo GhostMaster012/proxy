@@ -6,13 +6,32 @@
         </encoder>
     </appender>
 
-    <root level="DEBUG">
-        <appender-ref ref="STDOUT" />
-    </root>
-
-    <!-- Optional: Set specific log levels for your application's packages -->
-    <logger name="com.oblivion.neoproxy" level="DEBUG" additivity="false">
+    <logger name="com.oblivion.neoproxy" level="INFO" additivity="false">
         <appender-ref ref="STDOUT" />
     </logger>
+
+    <logger name="io.netty" level="WARN" additivity="false">
+        <appender-ref ref="STDOUT" />
+    </logger>
+
+    <logger name="org.springframework" level="INFO" additivity="false">
+        <appender-ref ref="STDOUT" />
+    </logger>
+
+    <!-- Spring Boot's embedded Tomcat/Netty for web server parts if any (e.g. Actuator) -->
+    <logger name="org.apache.coyote.http11" level="WARN" additivity="false">
+        <appender-ref ref="STDOUT" />
+    </logger>
+    <logger name="org.apache.tomcat" level="WARN" additivity="false">
+        <appender-ref ref="STDOUT" />
+    </logger>
+     <logger name="reactor.netty" level="WARN" additivity="false">
+        <appender-ref ref="STDOUT" />
+    </logger>
+
+
+    <root level="INFO"> <!-- Changed default root level to INFO -->
+        <appender-ref ref="STDOUT" />
+    </root>
 
 </configuration>

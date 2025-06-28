@@ -37,7 +37,8 @@ public class InitialLoginHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
         ConnectionState currentState = ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).get();
-        LOGGER.info("[{}] InitialLoginHandler added to pipeline. Current state: {}", ctx.channel().id().asShortText(), currentState);
+        LOGGER.info("[{}] InitialLoginHandler added to pipeline for {}. Current state: {}",
+                    ctx.channel().id().asShortText(), ctx.channel().remoteAddress(), currentState);
         super.handlerAdded(ctx);
     }
 
@@ -45,40 +46,41 @@ public class InitialLoginHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
         ByteBuf packetBuffer = (ByteBuf) msg;
-        String channelId = ctx.channel().id().asShortText();
+        String channelId = ctx.channel().id().asShortText(); // Keep for error/warn logs
         ConnectionState currentState = ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).get();
 
-        LOGGER.debug("[{}] InitialLoginHandler received a message in state: {}. Buffer readable bytes: {}",
-                     channelId, currentState, packetBuffer.readableBytes());
+        // LOGGER.debug("[{}] InitialLoginHandler received a message in state: {}. Buffer readable bytes: {}", // Removed DEBUG
+        //              channelId, currentState, packetBuffer.readableBytes());
 
         if (currentState != ConnectionState.LOGIN) {
-            LOGGER.warn("[{}] InitialLoginHandler received message in unexpected state: {}. Ignoring.", channelId, currentState);
-            // We could pass it on, but for now, this handler only expects LOGIN state messages.
-            // ctx.fireChannelRead(msg); // Or release and return
+            LOGGER.warn("[{}] InitialLoginHandler received message for {} in unexpected state: {}. Ignoring.",
+                        channelId, ctx.channel().remoteAddress(), currentState);
             packetBuffer.release();
             return;
         }
 
         try {
-            // For now, just peek at the packet ID and log it.
-            // We are not processing the login sequence yet.
             if (packetBuffer.isReadable()) {
-                int packetId = VarIntUtil.readVarInt(packetBuffer); // This consumes the VarInt
-                LOGGER.info("[{}] Received Login Packet ID: 0x{}. Remaining readable bytes in this packet: {}",
-                             channelId, Integer.toHexString(packetId), packetBuffer.readableBytes());
+                // Peek at the packet ID for logging, then reset reader index if we're not actually processing it.
+                // For now, we consume it as part of the simplified "log and close" logic.
+                packetBuffer.markReaderIndex();
+                int packetId = VarIntUtil.readVarInt(packetBuffer);
+                // packetBuffer.resetReaderIndex(); // Reset if we were only peeking and another handler would process.
+
+                LOGGER.info("[{}] Received Login Attempt from {}. Packet ID: 0x{}. (Full login not yet implemented)",
+                             channelId, ctx.channel().remoteAddress(), Integer.toHexString(packetId));
 
                 // TODO: Implement actual login packet handling (e.g., Login Start 0x00)
-                // For now, we'll just log and close the connection to indicate it's not fully handled.
-                LOGGER.warn("[{}] Login sequence not fully implemented. Closing connection after logging packet ID.", channelId);
+                LOGGER.warn("[{}] Login sequence for {} not fully implemented. Closing connection.", channelId, ctx.channel().remoteAddress());
                 ctx.close();
 
             } else {
-                LOGGER.warn("[{}] Received an empty buffer in LOGIN state.", channelId);
+                LOGGER.warn("[{}] Received an empty buffer in LOGIN state from {}.", channelId, ctx.channel().remoteAddress());
             }
         } finally {
-            if (packetBuffer.refCnt() > 0) { // VarIntUtil.readVarInt might have read the whole buffer if it was small
+            if (packetBuffer.refCnt() > 0) {
                 packetBuffer.release();
-                LOGGER.debug("[{}] Released packet buffer in InitialLoginHandler.", channelId);
+                // LOGGER.debug("[{}] Released packet buffer in InitialLoginHandler.", channelId); // Removed DEBUG
             }
         }
     }

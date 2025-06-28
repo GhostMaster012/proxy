@@ -45,25 +45,33 @@ public class ServerListPingHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
-        LOGGER.info("[{}] Channel active, setting initial state to HANDSHAKE.", ctx.channel().id().asShortText());
+        // This log is similar to what NeoProxyApplication logs, but specific to the handler.
+        // For production, one might be sufficient. The requirement implies this one.
+        LOGGER.info("Player connected: {}", ctx.channel().remoteAddress());
         ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(ConnectionState.HANDSHAKE);
         super.channelActive(ctx);
     }
 
     @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        LOGGER.info("Player disconnected: {}", ctx.channel().remoteAddress());
+        super.channelInactive(ctx);
+    }
+
+    @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-        ByteBuf packetBuffer = (ByteBuf) msg; // PacketDecoder sends ByteBuf (PacketID + Data)
+        ByteBuf packetBuffer = (ByteBuf) msg;
         ConnectionState currentState = ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).get();
-        String channelId = ctx.channel().id().asShortText();
+        String channelId = ctx.channel().id().asShortText(); // Keep for error/warn logs if needed
 
         try {
-            if (currentState == null) { // Should have been set in channelActive
+            if (currentState == null) {
                 LOGGER.warn("[{}] Connection state was null, defaulting to HANDSHAKE.", channelId);
                 currentState = ConnectionState.HANDSHAKE;
                 ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(currentState);
             }
 
-            LOGGER.debug("[{}] Received packet in state: {}", channelId, currentState);
+            // LOGGER.debug("[{}] Received packet in state: {}", channelId, currentState); // Removed DEBUG
 
             if (!packetBuffer.isReadable()) {
                 LOGGER.warn("[{}] Received an empty packet buffer in state {}.", channelId, currentState);
@@ -75,23 +83,21 @@ public class ServerListPingHandler extends ChannelInboundHandlerAdapter {
             } else if (currentState == ConnectionState.STATUS) {
                 handleStatus(ctx, packetBuffer);
             } else {
-                LOGGER.debug("[{}] Packet received in state {} (currently unhandled by ServerListPingHandler), ignoring.", channelId, currentState);
-                // Forward to next handler if login/play state or close if unexpected
-                // For now, server list ping only cares about HANDSHAKE and STATUS
+                // LOGGER.debug("[{}] Packet received in state {} (currently unhandled by ServerListPingHandler), ignoring.", channelId, currentState); // Removed DEBUG
+                // This case should ideally not be reached if pipeline is managed correctly for LOGIN state.
             }
         } finally {
             packetBuffer.release();
-            LOGGER.debug("[{}] Released packet buffer.", channelId);
+            // LOGGER.debug("[{}] Released packet buffer.", channelId); // Removed DEBUG
         }
     }
 
     private void handleHandshake(ChannelHandlerContext ctx, ByteBuf packetData) {
-        String channelId = ctx.channel().id().asShortText();
-        int initialReadableBytes = packetData.readableBytes();
-        LOGGER.debug("[{}] Handling HANDSHAKE. Initial readable bytes: {}", channelId, initialReadableBytes);
+        String channelId = ctx.channel().id().asShortText(); // Keep for error/warn logs
+        // LOGGER.debug("[{}] Handling HANDSHAKE. Initial readable bytes: {}", channelId, packetData.readableBytes()); // Removed DEBUG
 
         int packetId = VarIntUtil.readVarInt(packetData);
-        LOGGER.debug("[{}] Handshake Packet ID: 0x{}", channelId, Integer.toHexString(packetId));
+        // LOGGER.debug("[{}] Handshake Packet ID: 0x{}", channelId, Integer.toHexString(packetId)); // Removed DEBUG
 
         if (packetId != 0x00) {
             LOGGER.warn("[{}] Invalid Handshake Packet ID: 0x{}. Closing connection.", channelId, Integer.toHexString(packetId));
@@ -101,57 +107,50 @@ public class ServerListPingHandler extends ChannelInboundHandlerAdapter {
 
         int protocolVersion = VarIntUtil.readVarInt(packetData);
         ctx.channel().attr(NettyChannelAttributes.PROTOCOL_VERSION_KEY).set(protocolVersion);
-        LOGGER.debug("[{}] Protocol Version: {}", channelId, protocolVersion);
+        // LOGGER.debug("[{}] Protocol Version: {}", channelId, protocolVersion); // Removed DEBUG
 
         int serverAddressLength = VarIntUtil.readVarInt(packetData);
         String serverAddress = packetData.readCharSequence(serverAddressLength, StandardCharsets.UTF_8).toString();
-        LOGGER.debug("[{}] Server Address: {} (length {})", channelId, serverAddress, serverAddressLength);
+        // LOGGER.debug("[{}] Server Address: {} (length {})", channelId, serverAddress, serverAddressLength); // Removed DEBUG
 
         int serverPort = packetData.readUnsignedShort();
-        LOGGER.debug("[{}] Server Port: {}", channelId, serverPort);
+        // LOGGER.debug("[{}] Server Port: {}", channelId, serverPort); // Removed DEBUG
 
         int nextStateValue = VarIntUtil.readVarInt(packetData);
-        LOGGER.debug("[{}] Next State: {}", channelId, nextStateValue);
+        // LOGGER.debug("[{}] Next State: {}", channelId, nextStateValue); // Removed DEBUG
 
         if (nextStateValue == 1) { // Status
             ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(ConnectionState.STATUS);
-            LOGGER.info("[{}] Transitioned to STATUS state.", channelId);
-            // ServerListPingHandler remains in the pipeline to handle Status Request / Ping Request
+            LOGGER.info("[{}] Connection ({}) transitioned to STATUS state.", channelId, ctx.channel().remoteAddress());
         } else if (nextStateValue == 2) { // Login
             ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(ConnectionState.LOGIN);
-            LOGGER.info("[{}] Transitioned to LOGIN state. Replacing ServerListPingHandler with InitialLoginHandler.", channelId);
-            // Replace this handler with a dedicated login handler
-            // Note: We need to pass necessary services (like BackendServerManager, ConfigManager) to InitialLoginHandler if it needs them.
-            // For now, InitialLoginHandler will be simple.
+            LOGGER.info("[{}] Connection ({}) transitioned to LOGIN state. Replacing ServerListPingHandler with InitialLoginHandler.", channelId, ctx.channel().remoteAddress());
             ctx.pipeline().replace(this, "initialLoginHandler", new InitialLoginHandler(this.proxyConfig, this.listenerConfig));
-            // ServerListPingHandler is now removed for this connection.
         } else {
             LOGGER.warn("[{}] Invalid Next State value: {}. Closing connection.", channelId, nextStateValue);
             ctx.close();
         }
-        LOGGER.debug("[{}] Finished HANDSHAKE. Remaining readable bytes: {}", channelId, packetData.readableBytes());
+        // LOGGER.debug("[{}] Finished HANDSHAKE. Remaining readable bytes: {}", channelId, packetData.readableBytes()); // Removed DEBUG
     }
 
     private void handleStatus(ChannelHandlerContext ctx, ByteBuf packetData) {
-        String channelId = ctx.channel().id().asShortText();
-        int initialReadableBytes = packetData.readableBytes();
-        LOGGER.debug("[{}] Handling STATUS. Initial readable bytes: {}", channelId, initialReadableBytes);
+        String channelId = ctx.channel().id().asShortText(); // Keep for error/warn logs
+        // LOGGER.debug("[{}] Handling STATUS. Initial readable bytes: {}", channelId, packetData.readableBytes()); // Removed DEBUG
 
         int packetId = VarIntUtil.readVarInt(packetData);
-        LOGGER.debug("[{}] Status Packet ID: 0x{}", channelId, Integer.toHexString(packetId));
+        // LOGGER.debug("[{}] Status Packet ID: 0x{}", channelId, Integer.toHexString(packetId)); // Removed DEBUG
 
         if (packetId == 0x00) { // Status Request
-            LOGGER.info("[{}] Received Status Request (0x00). Sending response.", channelId);
+            LOGGER.info("[{}] Received Status Request from {}. Sending response.", channelId, ctx.channel().remoteAddress());
             sendServerStatusResponse(ctx);
         } else if (packetId == 0x01) { // Ping Request
-            LOGGER.info("[{}] Received Ping Request (0x01). Sending pong.", channelId);
-            // The rest of packetData is the payload for the ping
+            LOGGER.info("[{}] Received Ping Request from {}. Sending pong.", channelId, ctx.channel().remoteAddress());
             sendPongResponse(ctx, packetData);
         } else {
             LOGGER.warn("[{}] Unknown Packet ID in STATUS state: 0x{}. Closing connection.", channelId, Integer.toHexString(packetId));
             ctx.close();
         }
-        LOGGER.debug("[{}] Finished STATUS. Remaining readable bytes: {}", channelId, packetData.readableBytes());
+        // LOGGER.debug("[{}] Finished STATUS. Remaining readable bytes: {}", channelId, packetData.readableBytes()); // Removed DEBUG
     }
 
     private void sendServerStatusResponse(ChannelHandlerContext ctx) {
