@@ -61,28 +61,34 @@ public class PlayerSession {
 
     // Called by BackendConnection
     public void onBackendConnected(BackendConnection connection) {
-        LOGGER.info("Player {} successfully established backend connection to {}.", player.getUsername(), currentTargetServerName);
-        player.setCurrentServerName(currentTargetServerName);
-        // TODO: Initiate handshake sequence with the backend server.
-        // This involves sending a Handshake packet (with next state LOGIN),
-        // then a LoginStart packet with the player's actual username/UUID.
-        // For now, this is a placeholder.
-        LOGGER.info("TODO: Player {} - Send Handshake & LoginStart to backend server {}.", player.getUsername(), currentTargetServerName);
+        LOGGER.info("Player {} TCP connected to backend server {}. Initiating handshake.", player.getUsername(), currentTargetServerName);
+        player.setCurrentServerName(currentTargetServerName); // Set early, might be useful for context
+
+        // BackendConnection should handle setting its own channel attributes for state
+        connection.sendHandshakeToBackend();
+        // sendLoginStartToBackend will be called after handshake, or as part of a chained sequence
+        // For now, let's assume sendHandshakeToBackend also triggers sendLoginStartToBackend internally
+        // or PlayerSession calls it if sendHandshake is synchronous.
+        // Let's make BackendConnection responsible for the sequence.
+        // connection.sendLoginStartToBackend(); // This will be called by sendHandshake or a success callback for it
     }
 
     // Called by BackendConnection
     public void onBackendConnectionFailed(Throwable cause) {
-        LOGGER.warn("Player {} failed to connect to backend {}: {}", player.getUsername(), currentTargetServerName, cause.getMessage());
-        // TODO: Implement fallback logic (e.g., try another server, send message to player)
-        disconnect("Could not connect to the server: " + currentTargetServerName);
+        String safeServerName = currentTargetServerName != null ? currentTargetServerName : "the target server";
+        LOGGER.warn("Player {} failed to connect to backend {}. Reason: {}",
+                    player.getUsername(), safeServerName, cause.getMessage());
+        // TODO: Implement fallback logic (e.g., try another server)
+        disconnect("Could not connect to " + safeServerName + ". Please try again later.");
     }
 
     // Called by BackendConnection's BackendForwardingHandler
     public void onBackendDisconnected() {
-        LOGGER.info("Player {} was disconnected from backend server {}.", player.getUsername(), player.getCurrentServerName());
+        String previouslyConnectedServer = player.getCurrentServerName() != null ? player.getCurrentServerName() : "the server";
+        LOGGER.info("Player {} was disconnected from backend server {}.", player.getUsername(), previouslyConnectedServer);
         player.setCurrentServerName(null);
-        // TODO: Implement logic for when backend disconnects (e.g., send to lobby, kick player)
-        disconnect("Disconnected from server."); // Generic message for now
+        // TODO: Implement logic for when backend disconnects (e.g., send to lobby, kick player with specific reason if available)
+        disconnect("You have been disconnected from " + previouslyConnectedServer + ".");
     }
 
 

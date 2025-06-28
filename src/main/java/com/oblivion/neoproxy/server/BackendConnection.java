@@ -18,6 +18,12 @@ import io.netty.buffer.ByteBuf;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+// Custom imports
+import com.oblivion.neoproxy.protocol.VarIntUtil;
+import com.oblivion.neoproxy.protocol.ConnectionState;
+import com.oblivion.neoproxy.network.handler.NettyChannelAttributes;
+
+
 import java.util.concurrent.TimeUnit;
 
 public class BackendConnection {
@@ -71,15 +77,16 @@ public class BackendConnection {
         future.addListener(f -> {
             if (f.isSuccess()) {
                 this.channel = future.channel();
-                LOGGER.info("Player {} successfully connected to backend server {} ({})",
-                            playerSession.getPlayer().getUsername(), serverInfo, this.channel.remoteAddress());
-                playerSession.onBackendConnected(this);
-                // TODO: Send handshake + login sequence to backend server
-                // This will involve crafting packets similar to how a client would.
-                // For now, connection is established, but server doesn't know who we are.
+                LOGGER.info("Player {} successfully TCP connected to backend server {} ({})",
+                            playerSession.getPlayer().getUsername(), serverInfo.getAddress(), this.channel.remoteAddress());
+                // Set initial attributes for the backend channel before sending handshake
+                this.channel.attr(com.oblivion.neoproxy.network.handler.NettyChannelAttributes.CONNECTION_STATE_KEY).set(com.oblivion.neoproxy.protocol.ConnectionState.HANDSHAKE);
+                this.channel.attr(com.oblivion.neoproxy.network.handler.NettyChannelAttributes.PROTOCOL_VERSION_KEY).set(765); // Minecraft 1.20.4
+
+                playerSession.onBackendConnected(this); // This will trigger sendHandshakeToBackend -> sendLoginStartToBackend
             } else {
-                LOGGER.error("Player {} failed to connect to backend server {} ({}:{}): {}",
-                             playerSession.getPlayer().getUsername(), serverInfo, host, port, f.cause().getMessage(), f.cause());
+                LOGGER.error("Player {} failed to TCP connect to backend server {} ({}:{}): {}",
+                             playerSession.getPlayer().getUsername(), serverInfo.getAddress(), host, port, f.cause().getMessage(), f.cause());
                 playerSession.onBackendConnectionFailed(f.cause());
             }
         });
@@ -106,6 +113,68 @@ public class BackendConnection {
         return channel;
     }
 
+    public void sendHandshakeToBackend() {
+        if (channel == null || !channel.isActive()) {
+            LOGGER.warn("Cannot send handshake to backend, channel is not active for player {}.", playerSession.getPlayer().getUsername());
+            return;
+        }
+
+        String fullAddress = serverInfo.getAddress();
+        String[] addressParts = fullAddress.split(":");
+        String host = addressParts[0];
+        int port = Integer.parseInt(addressParts[1]);
+
+        // Ensure state is HANDSHAKE for PacketEncoder to work correctly for this packet
+        channel.attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(ConnectionState.HANDSHAKE);
+        // Protocol version already set during connect success callback
+
+        ByteBuf handshakePacket = channel.alloc().buffer();
+        VarIntUtil.writeVarInt(handshakePacket, 0x00); // Handshake Packet ID
+        VarIntUtil.writeVarInt(handshakePacket, 765);  // Protocol Version (1.20.4)
+        VarIntUtil.writeString(handshakePacket, host); // Server address (hostname/IP)
+        handshakePacket.writeShort(port);              // Server port
+        VarIntUtil.writeVarInt(handshakePacket, 2);    // Next state: 2 (Login)
+
+        channel.writeAndFlush(handshakePacket).addListener(future -> {
+            if (future.isSuccess()) {
+                LOGGER.info("Successfully sent Handshake to backend {} for player {}", serverInfo.getAddress(), playerSession.getPlayer().getUsername());
+                // Transition backend channel state to LOGIN for the next packet
+                channel.attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(ConnectionState.LOGIN);
+                sendLoginStartToBackend(); // Chain the next step
+            } else {
+                LOGGER.error("Failed to send Handshake to backend {} for player {}: {}",
+                             serverInfo.getAddress(), playerSession.getPlayer().getUsername(), future.cause().getMessage(), future.cause());
+                playerSession.onBackendConnectionFailed(future.cause()); // Or a more specific method
+            }
+        });
+    }
+
+    private void sendLoginStartToBackend() {
+        if (channel == null || !channel.isActive()) {
+            LOGGER.warn("Cannot send Login Start to backend, channel is not active for player {}.", playerSession.getPlayer().getUsername());
+            return;
+        }
+        // State should already be LOGIN here, set after successful handshake send.
+
+        ByteBuf loginStartPacket = channel.alloc().buffer();
+        VarIntUtil.writeVarInt(loginStartPacket, 0x00); // Login Start Packet ID (in LOGIN state)
+        VarIntUtil.writeString(loginStartPacket, playerSession.getPlayer().getUsername());
+        VarIntUtil.writeUUID(loginStartPacket, playerSession.getPlayer().getUuid());
+        // For 1.20.4, no more fields for Login Start after UUID if not using Mojang auth for proxy itself.
+
+        channel.writeAndFlush(loginStartPacket).addListener(future -> {
+            if (future.isSuccess()) {
+                LOGGER.info("Successfully sent Login Start to backend {} for player {}", serverInfo.getAddress(), playerSession.getPlayer().getUsername());
+                // Now we wait for the backend to respond (e.g., Set Compression, Login Success)
+                // The BackendForwardingHandler will process these.
+            } else {
+                LOGGER.error("Failed to send Login Start to backend {} for player {}: {}",
+                             serverInfo.getAddress(), playerSession.getPlayer().getUsername(), future.cause().getMessage(), future.cause());
+                playerSession.onBackendConnectionFailed(future.cause());
+            }
+        });
+    }
+
     private static class BackendForwardingHandler extends ChannelInboundHandlerAdapter {
         private final PlayerSession playerSession;
         private final String serverAddress;
@@ -118,14 +187,83 @@ public class BackendConnection {
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
             if (!(msg instanceof ByteBuf)) {
-                LOGGER.warn("BackendForwardingHandler received non-ByteBuf message: {}", msg.getClass().getName());
-                super.channelRead(ctx, msg); // Or release msg if appropriate
+                LOGGER.warn("[{}] BackendForwardingHandler for {} received non-ByteBuf message: {}",
+                            ctx.channel().id().asShortText(), playerSession.getPlayer().getUsername(), msg.getClass().getName());
+                super.channelRead(ctx, msg);
                 return;
             }
+
             ByteBuf packet = (ByteBuf) msg;
-            // LOGGER.debug("Forwarding packet from backend {} to player {}", serverAddress, playerSession.getPlayer().getUsername());
-            playerSession.sendToClient(packet.retain()); // Retain for the client to use
-            // Packet will be released by the client's pipeline or if sendToClient releases it.
+            ConnectionState backendState = ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).get();
+
+            if (backendState == ConnectionState.LOGIN) {
+                // We are in the LOGIN state with the backend, expect Login Success or Set Compression
+                packet.markReaderIndex();
+                int packetId = VarIntUtil.readVarInt(packet);
+                packet.resetReaderIndex(); // Reset so the full packet (ID + data) can be processed or forwarded
+
+                if (packetId == 0x02) { // Login Success (Backend)
+                    // Packet structure: UUID, Username, Number of properties, [Properties]
+                    // We don't strictly need to parse it for the proxy's core function here,
+                    // but it's good to acknowledge.
+                    LOGGER.info("Received Login Success (0x02) from backend {} for player {}",
+                                serverAddress, playerSession.getPlayer().getUsername());
+
+                    ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(ConnectionState.PLAY);
+                    LOGGER.info("Backend connection for player {} transitioned to PLAY state. Packet forwarding fully active.",
+                                playerSession.getPlayer().getUsername());
+
+                    // The Login Success packet from backend IS NOT forwarded to the client.
+                    // The client already received its own Login Success from the proxy.
+                    packet.release();
+                    return;
+
+                } else if (packetId == 0x03) { // Set Compression (Backend)
+                    packet.skipBytes(VarIntUtil.getVarIntSize(packetId)); // Skip packet ID VarInt
+                    int threshold = VarIntUtil.readVarInt(packet);
+                    LOGGER.info("Received Set Compression (0x03) from backend {} for player {} (threshold: {}).",
+                                serverAddress, playerSession.getPlayer().getUsername(), threshold);
+
+                    // TODO: CRITICAL - Implement compression handling in the pipeline.
+                    // If threshold >= 0, enable compression.
+                    // Need to add Netty's JdkZlibEncoder/Decoder or custom Minecraft-aware compressors.
+                    // For example, after PacketEncoder: new JdkZlibEncoder(true)
+                    // Before PacketDecoder: new JdkZlibDecoder(true)
+                    // This needs careful placement and potentially custom logic for Minecraft's VarInt length prefix on compressed data.
+                    LOGGER.warn("COMPRESSION HANDLING NOT IMPLEMENTED for backend connection of player {}. Subsequent packets might be misinterpreted if backend expects compression.",
+                                playerSession.getPlayer().getUsername());
+
+                    // The Set Compression packet from backend IS NOT forwarded to the client if client compression is handled separately or not at all by proxy yet.
+                    // If client also needs compression, proxy would send its own Set Compression.
+                    packet.release();
+                    return;
+                } else if (packetId == 0x00 && packet.readableBytes() > 0) { // Disconnect (Login)
+                     packet.skipBytes(VarIntUtil.getVarIntSize(packetId));
+                     String reason = VarIntUtil.readString(packet);
+                     LOGGER.warn("Backend {} disconnected player {} during login: {}", serverAddress, playerSession.getPlayer().getUsername(), reason);
+                     playerSession.disconnect("Backend error: " + reason);
+                     packet.release();
+                     ctx.close(); // Close connection to backend
+                     return;
+                }
+                // Else, unknown packet during LOGIN state with backend, could be an error or unexpected.
+                LOGGER.warn("[{}] Received unexpected packet ID 0x{} from backend {} for player {} during LOGIN state.",
+                            ctx.channel().id().asShortText(), Integer.toHexString(packetId), serverAddress, playerSession.getPlayer().getUsername());
+                // For now, forward it if we don't recognize it, though this might be risky.
+                // Or, better, disconnect. For now, let's just forward and see.
+                 playerSession.sendToClient(packet.retain());
+
+
+            } else if (backendState == ConnectionState.PLAY) {
+                // Standard forwarding if already in PLAY state
+                // LOGGER.debug("Forwarding packet from backend {} to player {}", serverAddress, playerSession.getPlayer().getUsername());
+                playerSession.sendToClient(packet.retain());
+            } else {
+                // Handshake state or other unexpected state for backend connection after initial TCP connect.
+                LOGGER.warn("[{}] BackendForwardingHandler for {} received packet in unexpected backend state: {}. Releasing packet.",
+                            ctx.channel().id().asShortText(), playerSession.getPlayer().getUsername(), backendState);
+                packet.release();
+            }
         }
 
         @Override
