@@ -61,16 +61,15 @@ public class PlayerSession {
 
     // Called by BackendConnection
     public void onBackendConnected(BackendConnection connection) {
-        LOGGER.info("Player {} TCP connected to backend server {}. Initiating handshake.", player.getUsername(), currentTargetServerName);
-        player.setCurrentServerName(currentTargetServerName); // Set early, might be useful for context
+        // Ensure currentTargetServerName is set for logging and context
+        player.setCurrentServerName(currentTargetServerName);
+        LOGGER.info("Player {} successfully TCP connected to backend server {}. Initiating Minecraft handshake sequence.",
+                    player.getUsername(), currentTargetServerName);
 
-        // BackendConnection should handle setting its own channel attributes for state
+        // Delegate the handshake and login packet sending to the BackendConnection instance.
+        // BackendConnection.sendHandshakeToBackend() will internally set channel attributes
+        // and upon successful handshake send, it will call its own sendLoginStartToBackend().
         connection.sendHandshakeToBackend();
-        // sendLoginStartToBackend will be called after handshake, or as part of a chained sequence
-        // For now, let's assume sendHandshakeToBackend also triggers sendLoginStartToBackend internally
-        // or PlayerSession calls it if sendHandshake is synchronous.
-        // Let's make BackendConnection responsible for the sequence.
-        // connection.sendLoginStartToBackend(); // This will be called by sendHandshake or a success callback for it
     }
 
     // Called by BackendConnection
