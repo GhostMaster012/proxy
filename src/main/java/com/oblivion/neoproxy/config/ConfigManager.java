@@ -41,37 +41,44 @@ public class ConfigManager {
                 configuration = yaml.load(in);
                 LOGGER.info("Successfully loaded configuration from {}", configPath.toAbsolutePath());
             } catch (IOException | YAMLException e) {
-                LOGGER.error("Error loading configuration from file {}: {}. Attempting to create a default config.",
-                             CONFIG_FILE_NAME, e.getMessage(), e);
-                // If loading existing file fails, it might be corrupted.
-                // We could back it up and write a new default one.
-                // For now, just proceed to create default.
+                LOGGER.error("Error loading configuration from file {}: {}. Attempting to create and use a default config.",
+                             configPath.toAbsolutePath(), e.getMessage(), e);
                 createAndLoadDefaultConfig(yaml, configPath);
             }
         } else {
-            LOGGER.warn("Configuration file {} not found in the working directory. Attempting to load from classpath.", CONFIG_FILE_NAME);
+            // This is the primary path for creating the default config if it's missing from the working directory.
+            LOGGER.info("Configuration file {} not found. Creating default configuration.", configPath.toAbsolutePath());
+            // Attempt to load from classpath first as a template to copy, if available.
             try (InputStream classpathStream = getClass().getClassLoader().getResourceAsStream(CONFIG_FILE_NAME)) {
                 if (classpathStream != null) {
-                    configuration = yaml.load(classpathStream);
-                    LOGGER.info("Successfully loaded configuration from classpath resource {}.", CONFIG_FILE_NAME);
-                    // Optionally write the classpath config to the filesystem if it wasn't there
-                    try {
-                        Files.createDirectories(configPath.getParent());
-                        Files.copy(getClass().getClassLoader().getResourceAsStream(CONFIG_FILE_NAME), configPath);
-                        LOGGER.info("Copied configuration from classpath to {}", configPath.toAbsolutePath());
-                    } catch (IOException e) {
-                        LOGGER.warn("Could not copy classpath config to filesystem: {}", e.getMessage());
+                    LOGGER.info("Found {} in classpath. Using it as a template for the working directory.", CONFIG_FILE_NAME);
+                    // Copy from classpath to working directory's configPath
+                    Path parentDir = configPath.getParent();
+                    if (parentDir != null) {
+                        Files.createDirectories(parentDir);
+                    }
+                    Files.copy(classpathStream, configPath);
+                    LOGGER.info("Copied default configuration from classpath to {}", configPath.toAbsolutePath());
+                    // Now load the copied file
+                    try (InputStream copiedFileStream = Files.newInputStream(configPath)) {
+                        configuration = yaml.load(copiedFileStream);
+                        LOGGER.info("Successfully loaded configuration from copied classpath file: {}", configPath.toAbsolutePath());
+                    } catch (IOException | YAMLException ex) {
+                        LOGGER.error("Failed to load the copied classpath config from {}: {}. Falling back to programmatic default.",
+                                     configPath.toAbsolutePath(), ex.getMessage(), ex);
+                        createAndLoadDefaultConfig(yaml, configPath); // Fallback to creating programmatic default
                     }
                 } else {
-                    LOGGER.warn("Default configuration file {} not found in classpath. Creating a new default config.yml.", CONFIG_FILE_NAME);
+                    // Classpath resource not found, so create the default programmatically.
+                    LOGGER.info("{} not found in classpath. Creating a new default config.yml programmatically.", CONFIG_FILE_NAME);
                     createAndLoadDefaultConfig(yaml, configPath);
                 }
-            } catch (YAMLException | IOException e) { // IOException for Files.copy
-                LOGGER.error("Error processing configuration from classpath resource {}: {}. Creating a new default config.yml.",
-                             CONFIG_FILE_NAME, e.getMessage(), e);
+            } catch (IOException | YAMLException e) {
+                LOGGER.error("Error processing or copying configuration from classpath: {}. Creating a new default config.yml programmatically.",
+                             e.getMessage(), e);
                 createAndLoadDefaultConfig(yaml, configPath);
             } catch (Exception e) {
-                 LOGGER.error("An unexpected error occurred while loading configuration from classpath: {}. Creating a new default config.yml.",
+                 LOGGER.error("An unexpected error occurred while attempting to use classpath configuration: {}. Creating a new default config.yml programmatically.",
                               e.getMessage(), e);
                  createAndLoadDefaultConfig(yaml, configPath);
             }
@@ -90,7 +97,9 @@ public class ConfigManager {
         // After writing, try to load it. If this fails, something is seriously wrong.
         try (InputStream in = Files.newInputStream(configPath)) {
             configuration = yaml.load(in);
-            LOGGER.info("Successfully loaded newly created default configuration from {}", configPath.toAbsolutePath());
+            // The message "Successfully created default config.yml in working directory" is logged by writeDefaultConfigToFile.
+            // This log confirms the loading of that (or any) config.yml.
+            LOGGER.info("Successfully loaded configuration from {}", configPath.getFileName());
         } catch (IOException | YAMLException e) {
             LOGGER.error("CRITICAL: Failed to load the newly created default config.yml from {}: {}. Using empty placeholder config.",
                          configPath.toAbsolutePath(), e.getMessage(), e);
@@ -120,10 +129,13 @@ public class ConfigManager {
 
         Yaml yaml = new Yaml(); // Standard YAML instance for dumping
         try {
-            Files.createDirectories(configPath.getParent()); // Ensure parent directory exists
+            Path parentDir = configPath.getParent();
+            if (parentDir != null) {
+                Files.createDirectories(parentDir);
+            }
             try (java.io.Writer writer = Files.newBufferedWriter(configPath, java.nio.charset.StandardCharsets.UTF_8)) {
                 yaml.dump(defaultConfig, writer);
-                LOGGER.info("Successfully wrote default configuration to {}", configPath.toAbsolutePath());
+                LOGGER.info("Successfully created default config.yml in working directory: {}", configPath.toAbsolutePath());
             }
         } catch (IOException e) {
             LOGGER.error("Could not write default config.yml to {}: {}", configPath.toAbsolutePath(), e.getMessage(), e);
