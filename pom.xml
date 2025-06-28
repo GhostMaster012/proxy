@@ -19,6 +19,8 @@
         <!-- <jnbt.version>1.4.1</jnbt.version> --> <!-- Removed jnbt.version as per new instructions -->
         <adventure-api.version>4.14.0</adventure-api.version>
         <gson.version>2.10.1</gson.version>
+        <logback.version>1.4.14</logback.version> <!-- Added Logback version -->
+        <snakeyaml.version>2.2</snakeyaml.version> <!-- Added SnakeYAML version -->
     </properties>
 
     <parent>
@@ -70,6 +72,20 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
+        </dependency>
+
+        <!-- Logging with Logback -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>${logback.version}</version>
+        </dependency>
+
+        <!-- YAML Configuration with SnakeYAML -->
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+            <version>${snakeyaml.version}</version>
         </dependency>
     </dependencies>
 

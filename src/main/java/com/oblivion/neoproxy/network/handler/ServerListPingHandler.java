@@ -10,108 +10,184 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.gson.GsonComponentSerializer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import com.oblivion.neoproxy.config.ListenerConfig;
+import com.oblivion.neoproxy.config.ProxyConfig; // Added import
 
 import java.nio.charset.StandardCharsets;
 
 public class ServerListPingHandler extends ChannelInboundHandlerAdapter {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(ServerListPingHandler.class);
     private static final Gson GSON = new Gson();
-    private static final String SERVER_NAME = "NeoProxy 1.20.4";
-    private static final int SERVER_PROTOCOL = 765;
-    private static final int MAX_PLAYERS = 1000;
-    private static final String MOTD_TEXT = "§6NeoProxy §7- §bNext Generation Minecraft Proxy";
+
+    // Configuration will be injected
+    private final ListenerConfig listenerConfig;
+    private final ProxyConfig proxyConfig; // To potentially get global settings if needed
+
+    // Constants related to Minecraft protocol version, can be static or derived if needed
+    private static final String SERVER_VERSION_NAME_PREFIX = "NeoProxy "; // e.g., "NeoProxy 1.20.4"
+    private static final int MINECRAFT_PROTOCOL_VERSION = 765; // For Minecraft 1.20.4
+
+    public ServerListPingHandler(ListenerConfig listenerConfig, ProxyConfig proxyConfig) {
+        this.listenerConfig = listenerConfig;
+        this.proxyConfig = proxyConfig;
+        if (this.listenerConfig == null) {
+            LOGGER.error("CRITICAL: ServerListPingHandler initialized with null ListenerConfig!");
+            // Consider throwing an IllegalArgumentException or having a fallback,
+            // but NeoProxyApplication should prevent this.
+        }
+         if (this.proxyConfig == null) {
+            LOGGER.error("CRITICAL: ServerListPingHandler initialized with null ProxyConfig!");
+        }
+    }
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
+        LOGGER.info("[{}] Channel active, setting initial state to HANDSHAKE.", ctx.channel().id().asShortText());
         ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(ConnectionState.HANDSHAKE);
         super.channelActive(ctx);
     }
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-        ByteBuf packetData = (ByteBuf) msg; // PacketDecoder sends ByteBuf (PacketID + Data)
+        ByteBuf packetBuffer = (ByteBuf) msg; // PacketDecoder sends ByteBuf (PacketID + Data)
         ConnectionState currentState = ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).get();
+        String channelId = ctx.channel().id().asShortText();
 
         try {
             if (currentState == null) { // Should have been set in channelActive
+                LOGGER.warn("[{}] Connection state was null, defaulting to HANDSHAKE.", channelId);
                 currentState = ConnectionState.HANDSHAKE;
                 ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(currentState);
             }
 
+            LOGGER.debug("[{}] Received packet in state: {}", channelId, currentState);
+
+            if (!packetBuffer.isReadable()) {
+                LOGGER.warn("[{}] Received an empty packet buffer in state {}.", channelId, currentState);
+                return;
+            }
+
             if (currentState == ConnectionState.HANDSHAKE) {
-                handleHandshake(ctx, packetData);
+                handleHandshake(ctx, packetBuffer);
             } else if (currentState == ConnectionState.STATUS) {
-                handleStatus(ctx, packetData);
+                handleStatus(ctx, packetBuffer);
             } else {
-                // LOGIN or PLAY state, not handled by this handler for server list ping
-                // System.out.println("Packet received in state " + currentState + ", not handled by ServerListPingHandler.");
+                LOGGER.debug("[{}] Packet received in state {} (currently unhandled by ServerListPingHandler), ignoring.", channelId, currentState);
+                // Forward to next handler if login/play state or close if unexpected
+                // For now, server list ping only cares about HANDSHAKE and STATUS
             }
         } finally {
-            packetData.release(); // Release the buffer after processing
+            packetBuffer.release();
+            LOGGER.debug("[{}] Released packet buffer.", channelId);
         }
     }
 
     private void handleHandshake(ChannelHandlerContext ctx, ByteBuf packetData) {
+        String channelId = ctx.channel().id().asShortText();
+        int initialReadableBytes = packetData.readableBytes();
+        LOGGER.debug("[{}] Handling HANDSHAKE. Initial readable bytes: {}", channelId, initialReadableBytes);
+
         int packetId = VarIntUtil.readVarInt(packetData);
+        LOGGER.debug("[{}] Handshake Packet ID: 0x{}", channelId, Integer.toHexString(packetId));
+
         if (packetId != 0x00) {
-            // Not a handshake packet, or malformed
+            LOGGER.warn("[{}] Invalid Handshake Packet ID: 0x{}. Closing connection.", channelId, Integer.toHexString(packetId));
             ctx.close();
             return;
         }
 
         int protocolVersion = VarIntUtil.readVarInt(packetData);
         ctx.channel().attr(NettyChannelAttributes.PROTOCOL_VERSION_KEY).set(protocolVersion);
+        LOGGER.debug("[{}] Protocol Version: {}", channelId, protocolVersion);
 
         int serverAddressLength = VarIntUtil.readVarInt(packetData);
-        packetData.skipBytes(serverAddressLength); // Server address string
+        String serverAddress = packetData.readCharSequence(serverAddressLength, StandardCharsets.UTF_8).toString();
+        LOGGER.debug("[{}] Server Address: {} (length {})", channelId, serverAddress, serverAddressLength);
 
-        packetData.skipBytes(2); // Server port unsigned short
+        int serverPort = packetData.readUnsignedShort();
+        LOGGER.debug("[{}] Server Port: {}", channelId, serverPort);
 
         int nextStateValue = VarIntUtil.readVarInt(packetData);
+        LOGGER.debug("[{}] Next State: {}", channelId, nextStateValue);
+
         if (nextStateValue == 1) { // Status
             ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(ConnectionState.STATUS);
+            LOGGER.info("[{}] Transitioned to STATUS state.", channelId);
+            // ServerListPingHandler remains in the pipeline to handle Status Request / Ping Request
         } else if (nextStateValue == 2) { // Login
             ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(ConnectionState.LOGIN);
-            // Further login handling would be done by a different handler
+            LOGGER.info("[{}] Transitioned to LOGIN state. Replacing ServerListPingHandler with InitialLoginHandler.", channelId);
+            // Replace this handler with a dedicated login handler
+            // Note: We need to pass necessary services (like BackendServerManager, ConfigManager) to InitialLoginHandler if it needs them.
+            // For now, InitialLoginHandler will be simple.
+            ctx.pipeline().replace(this, "initialLoginHandler", new InitialLoginHandler(this.proxyConfig, this.listenerConfig));
+            // ServerListPingHandler is now removed for this connection.
         } else {
-            ctx.close(); // Invalid next state
+            LOGGER.warn("[{}] Invalid Next State value: {}. Closing connection.", channelId, nextStateValue);
+            ctx.close();
         }
+        LOGGER.debug("[{}] Finished HANDSHAKE. Remaining readable bytes: {}", channelId, packetData.readableBytes());
     }
 
     private void handleStatus(ChannelHandlerContext ctx, ByteBuf packetData) {
+        String channelId = ctx.channel().id().asShortText();
+        int initialReadableBytes = packetData.readableBytes();
+        LOGGER.debug("[{}] Handling STATUS. Initial readable bytes: {}", channelId, initialReadableBytes);
+
         int packetId = VarIntUtil.readVarInt(packetData);
+        LOGGER.debug("[{}] Status Packet ID: 0x{}", channelId, Integer.toHexString(packetId));
 
         if (packetId == 0x00) { // Status Request
+            LOGGER.info("[{}] Received Status Request (0x00). Sending response.", channelId);
             sendServerStatusResponse(ctx);
         } else if (packetId == 0x01) { // Ping Request
+            LOGGER.info("[{}] Received Ping Request (0x01). Sending pong.", channelId);
+            // The rest of packetData is the payload for the ping
             sendPongResponse(ctx, packetData);
         } else {
-            // Unknown packet in STATUS state
+            LOGGER.warn("[{}] Unknown Packet ID in STATUS state: 0x{}. Closing connection.", channelId, Integer.toHexString(packetId));
             ctx.close();
         }
+        LOGGER.debug("[{}] Finished STATUS. Remaining readable bytes: {}", channelId, packetData.readableBytes());
     }
 
     private void sendServerStatusResponse(ChannelHandlerContext ctx) {
+        String channelId = ctx.channel().id().asShortText();
+
+        if (listenerConfig == null) {
+            LOGGER.error("[{}] Cannot send server status response, ListenerConfig is null.", channelId);
+            ctx.close(); // Or send a generic error response if possible
+            return;
+        }
+
         JsonObject responseJson = new JsonObject();
 
+        // Version
         JsonObject versionJson = new JsonObject();
-        versionJson.addProperty("name", SERVER_NAME);
-        versionJson.addProperty("protocol", SERVER_PROTOCOL);
+        // TODO: Potentially make the "1.20.4" part of SERVER_VERSION_NAME_PREFIX configurable or dynamic
+        versionJson.addProperty("name", SERVER_VERSION_NAME_PREFIX + "1.20.4");
+        versionJson.addProperty("protocol", MINECRAFT_PROTOCOL_VERSION);
         responseJson.add("version", versionJson);
 
+        // Players
         JsonObject playersJson = new JsonObject();
-        playersJson.addProperty("max", MAX_PLAYERS);
-        playersJson.addProperty("online", 0); // Static online count for now
-        // playersJson.add("sample", new JsonArray()); // Optional: add sample players
+        playersJson.addProperty("max", listenerConfig.getMax_players());
+        playersJson.addProperty("online", 0); // Static online count for now, replace with actual count later
+        // playersJson.add("sample", new JsonArray()); // Optional: add sample players (requires player data)
         responseJson.add("players", playersJson);
 
-        // Using Adventure for MOTD to allow color codes via legacy serializer if needed,
-        // but problem asks for specific JSON string, implying direct text.
-        // For "§6NeoProxy §7- §bNext Generation Minecraft Proxy"
-        // This can be directly put as a string in description, or use Adventure.
-        // Adventure ensures correct JSON formatting for text components.
-        Component motdComponent = Component.text(MOTD_TEXT); // Raw string with section signs
+        // Description (MOTD)
+        Component motdComponent = Component.text(listenerConfig.getMotd());
         responseJson.add("description", GsonComponentSerializer.gson().serializeToTree(motdComponent));
+
+        // Favicon (Optional)
+        // String favicon = proxyConfig.getFavicon(); // Assuming ProxyConfig could hold a base64 favicon string
+        // if (favicon != null && !favicon.isEmpty()) {
+        //    responseJson.addProperty("favicon", favicon);
+        // }
 
         String responseString = GSON.toJson(responseJson);
         byte[] responseBytes = responseString.getBytes(StandardCharsets.UTF_8);

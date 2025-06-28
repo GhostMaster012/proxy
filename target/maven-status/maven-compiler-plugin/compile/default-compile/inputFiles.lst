@@ -1,5 +1,11 @@
 /app/src/main/java/com/oblivion/neoproxy/protocol/PacketDecoder.java
 /app/src/main/java/com/oblivion/neoproxy/NeoProxyApplication.java
+/app/src/main/java/com/oblivion/neoproxy/config/ProxyConfig.java
+/app/src/main/java/com/oblivion/neoproxy/network/handler/InitialLoginHandler.java
+/app/src/main/java/com/oblivion/neoproxy/config/ConfigManager.java
+/app/src/main/java/com/oblivion/neoproxy/config/ServerInfo.java
+/app/src/main/java/com/oblivion/neoproxy/config/ListenerConfig.java
+/app/src/main/java/com/oblivion/neoproxy/server/BackendServerManager.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/PacketEncoder.java
 /app/src/main/java/com/oblivion/neoproxy/network/handler/ServerListPingHandler.java
 /app/src/main/java/com/oblivion/neoproxy/protocol/ConnectionState.java

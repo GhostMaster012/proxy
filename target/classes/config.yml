@@ -1,0 +1,79 @@
+# NeoProxy Configuration File
+
+# Backend Minecraft servers
+# Define each server with a unique name.
+# 'address' should be in the format "hostname:port".
+# 'restricted' can be true or false (currently informational, for future use).
+servers:
+  lobby:
+    address: "localhost:25566"
+    restricted: false
+  survival:
+    address: "localhost:25567"
+    restricted: false
+  creative:
+    address: "localhost:25568"
+    restricted: false
+
+# Listener configuration
+# Defines how the proxy listens for incoming Minecraft client connections.
+# You can have multiple listeners, but typically one is sufficient for most setups.
+listeners:
+  -
+    # query_port: 25577 # Example for UDP server query (if implemented later)
+    # For now, keeping it simple. If your ListenerConfig expects it, uncomment and set a value.
+    # If not used, you can remove 'query_port' from ListenerConfig.java or set a default.
+    # For this example, I'll assume query_port is not critical yet and might be 0 or removed.
+    query_port: 0 # Defaulting to 0, adjust if ListenerConfig requires a specific value or handle if missing.
+
+    # Message of the Day (MOTD) displayed in the Minecraft server list.
+    # Uses standard Minecraft color codes (e.g., §6 for gold, §b for aqua).
+    motd: "§6NeoProxy §7- §bYour Adventure Awaits!" # Default MOTD
+
+    # Tab list configuration (e.g., GLOBAL_PING, SERVER). Currently informational.
+    tab_list: GLOBAL_PING
+
+    # The IP address and port the proxy will bind to for client connections.
+    # "0.0.0.0" means listen on all available network interfaces.
+    host: "0.0.0.0:25565" # Default Minecraft port
+
+    # Maximum number of players that can connect to the proxy.
+    max_players: 1000
+
+    # Forced hosts: Route connections to specific servers based on the hostname used by the client.
+    # Format: "client.domain.com": "server_name_from_above"
+    forced_hosts:
+      lobby.example.com: lobby
+      survival.example.com: survival
+      creative.example.com: creative
+
+# Permissions system
+# Define permission groups and their associated permission nodes.
+# 'default' group applies to all players unless overridden.
+# 'admin' group for proxy administrators.
+permissions:
+  default:
+    - "neoproxy.command.server" # Example permission for /server
+  admin:
+    - "neoproxy.command.list"
+    - "neoproxy.command.find"
+    - "neoproxy.command.alert" # Example admin command
+    # Add other BungeeCord equivalent permissions as they are implemented
+    # - bungeecord.command.server
+    # - bungeecord.command.list
+    # - bungeecord.command.send
+    # - bungeecord.command.ip
+    # - bungeecord.command.reload # If implemented
+    # - bungeecord.command.end # If implemented
+    # - bungeecord.command.perms # If implemented
+    # - bungeecord.command.alertraw # If implemented
+    # - bungeecord.server.<servername> # Access to specific servers
+    # - bungeecord.admin # General admin permissions
+
+# Additional global settings can be added here later, for example:
+# player_limit: -1 # Global player limit, -1 for disabled
+# online_mode: true # Whether to authenticate players with Mojang
+# log_commands: true # Whether to log commands used by players
+# timeout: 30000 # Connection timeout in milliseconds
+# experimental_settings:
+#   some_new_feature: true
