@@ -195,16 +195,27 @@ public class PlayerSession {
                 }
                 bufferedPacket.resetReaderIndex(); // IMPORTANT: Reset to send the full packet (ID + Data)
 
-                LOGGER.debug("[FLUSHING] Player {}: Sending buffered client Packet ID 0x{} (size: {}). Payload Hex (first {} bytes after ID): {}",
+                LOGGER.debug("[FLUSHING] Player {}: Processing buffered client Packet ID 0x{} (size: {}). Payload Hex (first {} bytes after ID): {}",
                              player.getUsername(), Integer.toHexString(packetId), bufferedPacket.readableBytes(),
                              Math.min(bufferedPacket.readableBytes() - packetIdLength, 16), hexDump);
 
-                backendConnection.sendPacket(bufferedPacket); // This packet was retained by ClientForwardingHandler
-                flushedCount++;
+                // Filter out packets 0x00 and 0x03
+                if (packetId == 0x00 || packetId == 0x03) {
+                    LOGGER.info("[FILTERING] Player {}: Filtering out client Packet ID 0x{} (size: {}). Payload Hex: {}",
+                                 player.getUsername(), Integer.toHexString(packetId), bufferedPacket.readableBytes(), hexDump);
+                    bufferedPacket.release(); // Release the filtered packet
+                    // Do not increment flushedCount for filtered packets if it means "sent to backend"
+                } else {
+                    // Packet is not filtered, send it
+                    LOGGER.info("[FORWARDING] Player {}: Forwarding (previously buffered) client Packet ID 0x{} (size: {}) to backend.",
+                                 player.getUsername(), Integer.toHexString(packetId), bufferedPacket.readableBytes());
+                    backendConnection.sendPacket(bufferedPacket); // This packet was retained by ClientForwardingHandler
+                    flushedCount++; // Increment only for packets actually sent
+                }
             }
         }
         if (flushedCount > 0) {
-            LOGGER.info("Player {}: Flushed {} client packets to backend.", player.getUsername(), flushedCount);
+            LOGGER.info("Player {}: Successfully forwarded {} previously buffered client packets to backend.", player.getUsername(), flushedCount);
         }
     }
 
