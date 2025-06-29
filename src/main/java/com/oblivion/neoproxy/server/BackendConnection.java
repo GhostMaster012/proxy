@@ -24,6 +24,7 @@ import com.oblivion.neoproxy.protocol.ConnectionState;
 import com.oblivion.neoproxy.network.handler.NettyChannelAttributes;
 
 
+import java.net.InetSocketAddress; // Added
 import java.util.concurrent.TimeUnit;
 
 public class BackendConnection {
@@ -121,18 +122,36 @@ public class BackendConnection {
 
         String fullAddress = serverInfo.getAddress();
         String[] addressParts = fullAddress.split(":");
-        String host = addressParts[0];
-        int port = Integer.parseInt(addressParts[1]);
+        String originalBackendHostname = addressParts[0];
+        int originalBackendPort = Integer.parseInt(addressParts[1]);
+
+        // Retrieve client's actual IP and UUID
+        String clientIp = "127.0.0.1"; // Default/fallback
+        if (playerSession.getPlayer().getClientCtx().channel().remoteAddress() instanceof InetSocketAddress) {
+            InetSocketAddress clientAddress = (InetSocketAddress) playerSession.getPlayer().getClientCtx().channel().remoteAddress();
+            clientIp = clientAddress.getAddress().getHostAddress();
+        }
+        String clientUuidNoDashes = playerSession.getPlayer().getUuid().toString().replace("-", "");
+        String propertiesJson = "[]"; // Empty JSON array for player properties
+
+        // Construct the BungeeCord IP Forwarding string
+        // Format: originalHostname\00clientIP\00clientUUID\00properties
+        String forwardedHostString = originalBackendHostname + "\00" +
+                                     clientIp + "\00" +
+                                     clientUuidNoDashes + "\00" +
+                                     propertiesJson;
+
+        LOGGER.info("Using IP Forwarding. Forwarded host string for backend handshake: '{}'", forwardedHostString);
 
         // Ensure state is HANDSHAKE for PacketEncoder to work correctly for this packet
         channel.attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(ConnectionState.HANDSHAKE);
-        // Protocol version already set during connect success callback
+        // Protocol version (765) should already be set on the channel from the connect() method.
 
         ByteBuf handshakePacket = channel.alloc().buffer();
         VarIntUtil.writeVarInt(handshakePacket, 0x00); // Handshake Packet ID
         VarIntUtil.writeVarInt(handshakePacket, 765);  // Protocol Version (1.20.4)
-        VarIntUtil.writeString(handshakePacket, host); // Server address (hostname/IP)
-        handshakePacket.writeShort(port);              // Server port
+        VarIntUtil.writeString(handshakePacket, forwardedHostString); // Server address with IP forwarding data
+        handshakePacket.writeShort(originalBackendPort);              // Original backend server port
         VarIntUtil.writeVarInt(handshakePacket, 2);    // Next state: 2 (Login)
 
         channel.writeAndFlush(handshakePacket).addListener(future -> {
