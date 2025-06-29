@@ -55,43 +55,54 @@ public class MinecraftPacketDecompressor extends ByteToMessageDecoder {
 
             LOGGER.trace("Decompressor: Data Length is {}, packet is compressed. Compressed size: {} bytes.", dataLength, in.readableBytes());
 
-            byte[] compressedBytes = new byte[in.readableBytes()];
-            in.readBytes(compressedBytes);
+            byte[] compressedBytesArray = new byte[in.readableBytes()];
+            in.readBytes(compressedBytesArray);
 
-            inflater.setInput(compressedBytes);
-            ByteBuf decompressed = ctx.alloc().buffer(dataLength); // Allocate buffer for uncompressed data
+            inflater.setInput(compressedBytesArray);
+
+            // Create a heap byte array for the decompressed output
+            byte[] decompressedOutputArray = new byte[dataLength];
+            ByteBuf finalDecompressedBuf = null; // Declare here to ensure it's in scope for finally block if needed for release on error
+
             try {
-                int bytesDecompressed = inflater.inflate(decompressed.array(), decompressed.arrayOffset() + decompressed.writerIndex(), dataLength);
-                decompressed.writerIndex(decompressed.writerIndex() + bytesDecompressed);
+                int actualDecompressedBytes = inflater.inflate(decompressedOutputArray);
 
-                if (inflater.finished()) { // Ensure all input was consumed and output matches expected length
-                     if (bytesDecompressed != dataLength) {
-                        inflater.reset();
-                        throw new RuntimeException("Decompression error: Bytes decompressed (" + bytesDecompressed + ") != expected dataLength (" + dataLength + ")");
-                    }
-                    out.add(decompressed); // decompressed ByteBuf, don't release, pass to next handler
-                    LOGGER.trace("Decompressor: Successfully decompressed {} bytes into {} bytes.", compressedBytes.length, dataLength);
-                } else {
-                    // This means inflater needs more output space or more input, but we expect one full packet.
-                    decompressed.release();
+                if (!inflater.finished()) {
+                     // This implies the output buffer 'decompressedOutputArray' was too small,
+                     // or the input 'compressedBytesArray' was incomplete/corrupted.
+                     // Given dataLength is known, this should ideally not happen if dataLength is correct.
                     inflater.reset();
-                    throw new RuntimeException("Decompression error: Inflater not finished. Bytes decompressed: " + bytesDecompressed + ", expected: " + dataLength);
+                    throw new RuntimeException("Decompression error: Inflater not finished. Output array possibly too small or stream corrupted. " +
+                                               "Decompressed " + actualDecompressedBytes + " of expected " + dataLength);
                 }
+
+                if (actualDecompressedBytes != dataLength) {
+                    inflater.reset();
+                    throw new RuntimeException("Decompression error: Bytes decompressed (" + actualDecompressedBytes +
+                                               ") != expected dataLength (" + dataLength + ")");
+                }
+
+                // Write the heap array into a ByteBuf (Netty can optimize this if it's heap -> heap or copy if heap -> direct)
+                finalDecompressedBuf = ctx.alloc().buffer(dataLength);
+                finalDecompressedBuf.writeBytes(decompressedOutputArray, 0, actualDecompressedBytes);
+
+                out.add(finalDecompressedBuf); // Pass the new buffer to the next handler
+                LOGGER.trace("Decompressor: Successfully decompressed {} bytes into {} bytes.", compressedBytesArray.length, dataLength);
+
             } catch (Exception e) {
-                decompressed.release(); // Release buffer on error
-                inflater.reset();
+                if (finalDecompressedBuf != null) {
+                    finalDecompressedBuf.release(); // Release buffer if created before error
+                }
+                inflater.reset(); // Reset inflater on any error during inflation
                 LOGGER.error("Error during packet decompression: {}", e.getMessage(), e);
-                throw e; // Rethrow to allow Netty to handle it (e.g., close connection)
+                throw e;
             } finally {
-                 if (!inflater.finished() && inflater.needsInput() && compressedBytes.length > 0) {
-                    // If inflater is not finished but needs more input, it implies the compressed data was incomplete.
-                    // This should have been caught by the framing decoder if it happened.
-                    // However, if it still occurs, reset.
+                // Ensure inflater is reset for the next packet, especially if finished() wasn't true but no exception.
+                // If an exception occurred, it should have been reset in catch.
+                // If finished, it's also good practice to reset if it's to be reused.
+                if (inflater.finished() || !ctx.channel().isActive()) { // Reset if finished or channel is closing
                     inflater.reset();
-                 } else if (!inflater.finished()){ // If not finished for other reasons, reset.
-                    inflater.reset();
-                 }
-                 // Note: Inflater is typically reset when finished or on error.
+                }
             }
         }
     }
