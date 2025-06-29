@@ -8,10 +8,11 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.EventLoopGroup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import io.netty.buffer.ByteBufUtil; // Added
 
 import java.util.Optional;
-import java.util.Queue; // Added
-import java.util.concurrent.ConcurrentLinkedQueue; // Added
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class PlayerSession {
 
@@ -170,12 +171,33 @@ public class PlayerSession {
                 // Peek at packet ID for logging before sending
                 bufferedPacket.markReaderIndex();
                 int packetId = -1;
+                int packetIdLength = 0;
+                String hexDump = "N/A";
+
                 if (bufferedPacket.readableBytes() >= 1) {
-                    try { packetId = com.oblivion.neoproxy.protocol.VarIntUtil.readVarInt(bufferedPacket); } catch (Exception e) { /* ignore */ }
+                    try {
+                        packetId = com.oblivion.neoproxy.protocol.VarIntUtil.readVarInt(bufferedPacket);
+                        packetIdLength = bufferedPacket.readerIndex(); // Bytes read for VarInt
+
+                        // Capture hex dump of payload (after packet ID)
+                        int payloadReadableBytes = bufferedPacket.readableBytes();
+                        int dumpLength = Math.min(payloadReadableBytes, 16);
+                        if (dumpLength > 0) {
+                            hexDump = ByteBufUtil.hexDump(bufferedPacket, bufferedPacket.readerIndex(), dumpLength);
+                        } else {
+                            hexDump = "[No Payload Data]";
+                        }
+
+                    } catch (Exception e) {
+                        LOGGER.trace("Player {}: Error peeking at Packet ID/payload for hex dump in flushClientPacketBuffer. Packet Size: {}",
+                                     player.getUsername(), bufferedPacket.readableBytes(), e);
+                    }
                 }
-                bufferedPacket.resetReaderIndex();
-                LOGGER.debug("[FLUSHING] Player {}: Sending buffered client Packet ID 0x{} (size: {}) to backend.",
-                             player.getUsername(), Integer.toHexString(packetId), bufferedPacket.readableBytes());
+                bufferedPacket.resetReaderIndex(); // IMPORTANT: Reset to send the full packet (ID + Data)
+
+                LOGGER.debug("[FLUSHING] Player {}: Sending buffered client Packet ID 0x{} (size: {}). Payload Hex (first {} bytes after ID): {}",
+                             player.getUsername(), Integer.toHexString(packetId), bufferedPacket.readableBytes(),
+                             Math.min(bufferedPacket.readableBytes() - packetIdLength, 16), hexDump);
 
                 backendConnection.sendPacket(bufferedPacket); // This packet was retained by ClientForwardingHandler
                 flushedCount++;
