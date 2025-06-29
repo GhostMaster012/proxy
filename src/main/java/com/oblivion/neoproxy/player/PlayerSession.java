@@ -10,6 +10,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
+import java.util.Queue; // Added
+import java.util.concurrent.ConcurrentLinkedQueue; // Added
 
 public class PlayerSession {
 
@@ -17,11 +19,13 @@ public class PlayerSession {
 
     private final ProxyPlayer player;
     private BackendConnection backendConnection;
-    private final ConfigManager configManager; // For general proxy config if needed
-    private final BackendServerManager serverManager; // To get ServerInfo
-    private final EventLoopGroup backendWorkerGroup; // For BackendConnection
+    private final ConfigManager configManager;
+    private final BackendServerManager serverManager;
+    private final EventLoopGroup backendWorkerGroup;
 
     private String currentTargetServerName;
+    private final Queue<ByteBuf> clientPacketBuffer = new ConcurrentLinkedQueue<>();
+    private volatile boolean backendPlayStateReady = false;
 
     public PlayerSession(ProxyPlayer player, ConfigManager configManager, BackendServerManager serverManager, EventLoopGroup backendWorkerGroup) {
         this.player = player;
@@ -111,8 +115,10 @@ public class PlayerSession {
     }
 
     public void sendToServer(ByteBuf packet) { // packet is expected to be already retained by the caller (ClientForwardingHandler)
-        if (backendConnection != null && backendConnection.getChannel() != null && backendConnection.getChannel().isActive()) {
-            // Peek at packet ID for logging
+        if (backendConnection != null && backendConnection.getChannel() != null &&
+            backendConnection.getChannel().isActive() && backendPlayStateReady) {
+
+            // Peek at packet ID for logging before sending
             packet.markReaderIndex();
             int packetId = -1;
             if (packet.readableBytes() >= 1) {
@@ -122,10 +128,61 @@ public class PlayerSession {
             LOGGER.debug("[PROXY->SERVER] Player {}: Sending Packet ID 0x{} (size: {}) to backend server {}.",
                          player.getUsername(), Integer.toHexString(packetId), packet.readableBytes(), backendConnection.getServerInfo().getAddress());
 
-            backendConnection.sendPacket(packet); // sendPacket will pass it to writeAndFlush, which consumes it
+            backendConnection.sendPacket(packet); // Forward immediately
         } else {
-            LOGGER.warn("Player {} backend channel inactive, releasing packet (size: {}) meant for server.", player.getUsername(), packet.readableBytes());
-            packet.release();
+            // Backend not ready or inactive, buffer the packet
+            // The packet is already retained by ClientForwardingHandler, so just add it.
+            clientPacketBuffer.offer(packet);
+
+            packet.markReaderIndex(); // Mark for peeking ID
+            int packetId = -1;
+            if (packet.readableBytes() >= 1) {
+                try { packetId = com.oblivion.neoproxy.protocol.VarIntUtil.readVarInt(packet); } catch (Exception e) { /* ignore */ }
+            }
+            packet.resetReaderIndex(); // Reset after peeking
+
+            LOGGER.debug("[BUFFERING] Player {}: Backend not ready/active (PlayStateReady: {}), buffering client Packet ID 0x{} (size: {}). Buffer size: {}",
+                         player.getUsername(), backendPlayStateReady, Integer.toHexString(packetId), packet.readableBytes(), clientPacketBuffer.size());
+            // DO NOT release the packet here, it's now owned by the queue.
+        }
+    }
+
+    public void setBackendPlayReadyAndFlushBuffer() {
+        LOGGER.info("Player {}: Backend is now PLAY ready.", player.getUsername());
+        this.backendPlayStateReady = true;
+        flushClientPacketBuffer();
+    }
+
+    private void flushClientPacketBuffer() {
+        if (backendConnection == null || backendConnection.getChannel() == null || !backendConnection.getChannel().isActive()) {
+            LOGGER.warn("Player {}: Tried to flush client packet buffer, but backend connection is not active. Buffered packets ({}) will remain.",
+                        player.getUsername(), clientPacketBuffer.size());
+            return;
+        }
+
+        int flushedCount = 0;
+        LOGGER.debug("Player {}: Flushing {} buffered client packets to backend server {}.",
+                     player.getUsername(), clientPacketBuffer.size(), backendConnection.getServerInfo().getAddress());
+
+        while (!clientPacketBuffer.isEmpty()) {
+            ByteBuf bufferedPacket = clientPacketBuffer.poll();
+            if (bufferedPacket != null) {
+                // Peek at packet ID for logging before sending
+                bufferedPacket.markReaderIndex();
+                int packetId = -1;
+                if (bufferedPacket.readableBytes() >= 1) {
+                    try { packetId = com.oblivion.neoproxy.protocol.VarIntUtil.readVarInt(bufferedPacket); } catch (Exception e) { /* ignore */ }
+                }
+                bufferedPacket.resetReaderIndex();
+                LOGGER.debug("[FLUSHING] Player {}: Sending buffered client Packet ID 0x{} (size: {}) to backend.",
+                             player.getUsername(), Integer.toHexString(packetId), bufferedPacket.readableBytes());
+
+                backendConnection.sendPacket(bufferedPacket); // This packet was retained by ClientForwardingHandler
+                flushedCount++;
+            }
+        }
+        if (flushedCount > 0) {
+            LOGGER.info("Player {}: Flushed {} client packets to backend.", player.getUsername(), flushedCount);
         }
     }
 
@@ -135,11 +192,24 @@ public class PlayerSession {
             backendConnection.disconnect();
             backendConnection = null;
         }
+        // Clear and release any buffered packets
+        clearClientPacketBuffer();
         player.disconnect(reason); // This should send packet to client and close client connection
     }
 
     public void close() { // General cleanup
         LOGGER.info("Closing PlayerSession for {}", player.getUsername());
-        disconnect("Proxy shutting down or session ended.");
+        disconnect("Proxy shutting down or session ended."); // disconnect() will call clearClientPacketBuffer()
+    }
+
+    private void clearClientPacketBuffer() {
+        if (!clientPacketBuffer.isEmpty()) {
+            LOGGER.debug("Player {}: Clearing {} buffered client packets due to session close/disconnect.",
+                         player.getUsername(), clientPacketBuffer.size());
+            ByteBuf packet;
+            while ((packet = clientPacketBuffer.poll()) != null) {
+                packet.release();
+            }
+        }
     }
 }

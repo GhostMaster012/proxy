@@ -233,12 +233,13 @@ public class BackendConnection {
                                 serverAddress, playerSession.getPlayer().getUsername());
 
                     ctx.channel().attr(NettyChannelAttributes.CONNECTION_STATE_KEY).set(ConnectionState.PLAY);
-                    LOGGER.info("Backend connection for player {} transitioned to PLAY state. Packet forwarding fully active.",
+                    LOGGER.info("Backend connection for player {} transitioned to PLAY state.",
                                 playerSession.getPlayer().getUsername());
 
-                    // The Login Success packet from backend IS NOT forwarded to the client.
-                    // The client already received its own Login Success from the proxy.
-                    packet.release();
+                    // Notify PlayerSession that backend is ready and to flush any buffered packets
+                    playerSession.setBackendPlayReadyAndFlushBuffer();
+
+                    packet.release(); // Consume the Login Success packet, do not forward.
                     return;
 
                 } else if (packetId == 0x03) { // Set Compression (Backend)
