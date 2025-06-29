@@ -65,9 +65,24 @@ public class ClientForwardingHandler extends ChannelInboundHandlerAdapter {
         }
 
         ByteBuf packet = (ByteBuf) msg;
-        // LOGGER.debug("Forwarding packet from client {} to server.", session.getPlayer().getUsername());
-        session.sendToServer(packet.retain()); // PlayerSession is responsible for releasing if not sent.
-                                              // Retain because ByteToMessageDecoder might release original.
+
+        packet.markReaderIndex();
+        int packetId = -1;
+        if (packet.readableBytes() >= 1) {
+            try {
+                // Need VarIntUtil, assuming it's accessible or add static import
+                packetId = com.oblivion.neoproxy.protocol.VarIntUtil.readVarInt(packet);
+            } catch (Exception e) {
+                // Could be an IndexOutOfBoundsException if packet is too small for a full VarInt
+                LOGGER.trace("[CLIENT->PROXY] Player {}: Error peeking at Packet ID (packet too small for VarInt?). Size: {}",
+                             session.getPlayer().getUsername(), packet.readableBytes(), e);
+            }
+        }
+        packet.resetReaderIndex();
+        LOGGER.debug("[CLIENT->PROXY] Player {}: Forwarding Packet ID 0x{} to server. Size: {}",
+                     session.getPlayer().getUsername(), Integer.toHexString(packetId), packet.readableBytes());
+
+        session.sendToServer(packet.retain());
     }
 
     @Override

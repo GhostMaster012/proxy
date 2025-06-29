@@ -6,7 +6,7 @@
         </encoder>
     </appender>
 
-    <logger name="com.oblivion.neoproxy" level="INFO" additivity="false">
+    <logger name="com.oblivion.neoproxy" level="DEBUG" additivity="false"> <!-- Changed to DEBUG -->
         <appender-ref ref="STDOUT" />
     </logger>
 

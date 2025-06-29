@@ -91,19 +91,41 @@ public class PlayerSession {
     }
 
 
-    public void sendToClient(ByteBuf packet) {
+    public void sendToClient(ByteBuf packet) { // packet is expected to be already retained by the caller (BackendForwardingHandler)
         if (player.getClientCtx() != null && player.getClientCtx().channel().isActive()) {
-            player.getClientCtx().writeAndFlush(packet.retain());
+            // Peek at packet ID for logging
+            packet.markReaderIndex();
+            int packetId = -1;
+            if (packet.readableBytes() >= 1) {
+                try { packetId = com.oblivion.neoproxy.protocol.VarIntUtil.readVarInt(packet); } catch (Exception e) { /* ignore */ }
+            }
+            packet.resetReaderIndex();
+            LOGGER.debug("[PROXY->CLIENT] Player {}: Sending Packet ID 0x{} (size: {}) to client.",
+                         player.getUsername(), Integer.toHexString(packetId), packet.readableBytes());
+
+            player.getClientCtx().writeAndFlush(packet); // writeAndFlush consumes the packet (decrements refCnt)
         } else {
-            packet.release(); // Must release if not sending
+            LOGGER.warn("Player {} client channel inactive, releasing packet (size: {}) meant for client.", player.getUsername(), packet.readableBytes());
+            packet.release();
         }
     }
 
-    public void sendToServer(ByteBuf packet) {
+    public void sendToServer(ByteBuf packet) { // packet is expected to be already retained by the caller (ClientForwardingHandler)
         if (backendConnection != null && backendConnection.getChannel() != null && backendConnection.getChannel().isActive()) {
-            backendConnection.sendPacket(packet.retain());
+            // Peek at packet ID for logging
+            packet.markReaderIndex();
+            int packetId = -1;
+            if (packet.readableBytes() >= 1) {
+                try { packetId = com.oblivion.neoproxy.protocol.VarIntUtil.readVarInt(packet); } catch (Exception e) { /* ignore */ }
+            }
+            packet.resetReaderIndex();
+            LOGGER.debug("[PROXY->SERVER] Player {}: Sending Packet ID 0x{} (size: {}) to backend server {}.",
+                         player.getUsername(), Integer.toHexString(packetId), packet.readableBytes(), backendConnection.getServerInfo().getAddress());
+
+            backendConnection.sendPacket(packet); // sendPacket will pass it to writeAndFlush, which consumes it
         } else {
-            packet.release(); // Must release if not sending
+            LOGGER.warn("Player {} backend channel inactive, releasing packet (size: {}) meant for server.", player.getUsername(), packet.readableBytes());
+            packet.release();
         }
     }
 

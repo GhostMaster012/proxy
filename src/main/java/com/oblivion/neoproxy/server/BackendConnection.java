@@ -93,12 +93,12 @@ public class BackendConnection {
         });
     }
 
-    public void sendPacket(ByteBuf packet) {
+    public void sendPacket(ByteBuf packet) { // packet is expected to be already retained by PlayerSession.sendToServer
         if (channel != null && channel.isActive()) {
-            channel.writeAndFlush(packet.retain()); // Retain because it might be used elsewhere or by Netty async
+            channel.writeAndFlush(packet); // writeAndFlush consumes the packet
         } else {
             LOGGER.warn("Attempted to send packet to inactive backend channel for player {}", playerSession.getPlayer().getUsername());
-            packet.release(); // Release if not sending
+            packet.release();
         }
     }
 
@@ -112,6 +112,10 @@ public class BackendConnection {
 
     public Channel getChannel() {
         return channel;
+    }
+
+    public ServerInfo getServerInfo() { // Added getter
+        return serverInfo;
     }
 
     public void sendHandshakeToBackend() {
@@ -288,8 +292,37 @@ public class BackendConnection {
 
 
             } else if (backendState == ConnectionState.PLAY) {
-                // Standard forwarding if already in PLAY state
-                // LOGGER.debug("Forwarding packet from backend {} to player {}", serverAddress, playerSession.getPlayer().getUsername());
+                packet.markReaderIndex();
+                int packetId = -1;
+                if (packet.readableBytes() >= 1) {
+                    try {
+                        packetId = VarIntUtil.readVarInt(packet);
+                    } catch (Exception e) {
+                         LOGGER.trace("[BACKEND->PROXY] Player {}: Error peeking at Packet ID from backend (packet too small for VarInt?). Size: {}",
+                                     playerSession.getPlayer().getUsername(), packet.readableBytes(), e);
+                    }
+                }
+                packet.resetReaderIndex();
+                LOGGER.debug("[BACKEND->PROXY] Player {}: Forwarding Packet ID 0x{} to client. Size: {}",
+                             playerSession.getPlayer().getUsername(), Integer.toHexString(packetId), packet.readableBytes());
+
+                // Example logging for specific important game packets from backend
+                // Ensure these IDs are correct for Minecraft 1.20.4 (protocol 765)
+                // Common Clientbound Packet IDs (Login and Play): https://wiki.vg/Protocol#Clientbound_2
+                // Play state:
+                // Join Game: 0x29 (was 0x26 in 1.19.4, 0x28 in 1.20.2) - Check wiki.vg for 765. For 1.20.4 (765) it's 0x29.
+                // Spawn Position: 0x4B (was 0x40 in 1.19.4, 0x49 in 1.20.2) - For 1.20.4 (765) it's 0x4B.
+                // Player Abilities: 0x37 (was 0x32 in 1.19.4, 0x36 in 1.20.2) - For 1.20.4 (765) it's 0x37.
+
+                if (packetId == 0x29) {
+                    LOGGER.debug("*** [BACKEND->PROXY] Player {}: Forwarding JOIN GAME (0x29) to client. ***", playerSession.getPlayer().getUsername());
+                } else if (packetId == 0x4B) {
+                    LOGGER.debug("*** [BACKEND->PROXY] Player {}: Forwarding SPAWN POSITION (0x4B) to client. ***", playerSession.getPlayer().getUsername());
+                } else if (packetId == 0x37) {
+                    LOGGER.debug("*** [BACKEND->PROXY] Player {}: Forwarding PLAYER ABILITIES (0x37) to client. ***", playerSession.getPlayer().getUsername());
+                }
+
+
                 playerSession.sendToClient(packet.retain());
             } else {
                 // Handshake state or other unexpected state for backend connection after initial TCP connect.
