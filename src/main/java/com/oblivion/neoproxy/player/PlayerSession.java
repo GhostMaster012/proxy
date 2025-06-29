@@ -26,7 +26,7 @@ public class PlayerSession {
 
     private String currentTargetServerName;
     private final Queue<ByteBuf> clientPacketBuffer = new ConcurrentLinkedQueue<>();
-    private volatile boolean backendPlayStateReady = false;
+    private volatile boolean backendJoinGameForwardedToClient = false; // Renamed
 
     public PlayerSession(ProxyPlayer player, ConfigManager configManager, BackendServerManager serverManager, EventLoopGroup backendWorkerGroup) {
         this.player = player;
@@ -117,9 +117,8 @@ public class PlayerSession {
 
     public void sendToServer(ByteBuf packet) { // packet is expected to be already retained by the caller (ClientForwardingHandler)
         if (backendConnection != null && backendConnection.getChannel() != null &&
-            backendConnection.getChannel().isActive() && backendPlayStateReady) {
+            backendConnection.getChannel().isActive() && backendJoinGameForwardedToClient) { // Used renamed flag
 
-            // Peek at packet ID for logging before sending
             packet.markReaderIndex();
             int packetId = -1;
             if (packet.readableBytes() >= 1) {
@@ -131,26 +130,27 @@ public class PlayerSession {
 
             backendConnection.sendPacket(packet); // Forward immediately
         } else {
-            // Backend not ready or inactive, buffer the packet
-            // The packet is already retained by ClientForwardingHandler, so just add it.
             clientPacketBuffer.offer(packet);
 
-            packet.markReaderIndex(); // Mark for peeking ID
+            packet.markReaderIndex();
             int packetId = -1;
             if (packet.readableBytes() >= 1) {
                 try { packetId = com.oblivion.neoproxy.protocol.VarIntUtil.readVarInt(packet); } catch (Exception e) { /* ignore */ }
             }
-            packet.resetReaderIndex(); // Reset after peeking
+            packet.resetReaderIndex();
 
-            LOGGER.debug("[BUFFERING] Player {}: Backend not ready/active (PlayStateReady: {}), buffering client Packet ID 0x{} (size: {}). Buffer size: {}",
-                         player.getUsername(), backendPlayStateReady, Integer.toHexString(packetId), packet.readableBytes(), clientPacketBuffer.size());
-            // DO NOT release the packet here, it's now owned by the queue.
+            LOGGER.debug("[BUFFERING] Player {}: Backend Join Game not yet forwarded (Flag: {}), buffering client Packet ID 0x{} (size: {}). Buffer size: {}",
+                         player.getUsername(), backendJoinGameForwardedToClient, Integer.toHexString(packetId), packet.readableBytes(), clientPacketBuffer.size());
         }
     }
 
-    public void setBackendPlayReadyAndFlushBuffer() {
-        LOGGER.info("Player {}: Backend is now PLAY ready.", player.getUsername());
-        this.backendPlayStateReady = true;
+    /**
+     * Called by BackendForwardingHandler after it has successfully forwarded the Join Game packet
+     * (or equivalent critical setup packet) from the backend to the client.
+     */
+    public void onBackendJoinGameForwarded() { // Renamed method
+        LOGGER.info("Player {}: Backend Join Game packet has been forwarded to client. Setting flag and flushing client packet buffer.", player.getUsername());
+        this.backendJoinGameForwardedToClient = true; // Set the new flag
         flushClientPacketBuffer();
     }
 

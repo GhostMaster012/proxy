@@ -237,7 +237,7 @@ public class BackendConnection {
                                 playerSession.getPlayer().getUsername());
 
                     // Notify PlayerSession that backend is ready and to flush any buffered packets
-                    playerSession.setBackendPlayReadyAndFlushBuffer();
+                    playerSession.onBackendJoinGameForwarded(); // Corrected method name
 
                     packet.release(); // Consume the Login Success packet, do not forward.
                     return;
@@ -315,16 +315,21 @@ public class BackendConnection {
                 // Spawn Position: 0x4B (was 0x40 in 1.19.4, 0x49 in 1.20.2) - For 1.20.4 (765) it's 0x4B.
                 // Player Abilities: 0x37 (was 0x32 in 1.19.4, 0x36 in 1.20.2) - For 1.20.4 (765) it's 0x37.
 
-                if (packetId == 0x29) {
-                    LOGGER.debug("*** [BACKEND->PROXY] Player {}: Forwarding JOIN GAME (0x29) to client. ***", playerSession.getPlayer().getUsername());
-                } else if (packetId == 0x4B) {
-                    LOGGER.debug("*** [BACKEND->PROXY] Player {}: Forwarding SPAWN POSITION (0x4B) to client. ***", playerSession.getPlayer().getUsername());
-                } else if (packetId == 0x37) {
-                    LOGGER.debug("*** [BACKEND->PROXY] Player {}: Forwarding PLAYER ABILITIES (0x37) to client. ***", playerSession.getPlayer().getUsername());
+                // Forward all PLAY packets from backend to client first
+                playerSession.sendToClient(packet.retain()); // Retain as sendToClient will eventually cause a writeAndFlush
+
+                // After forwarding, check if it was the Join Game packet
+                if (packetId == 0x29) { // Join Game packet ID for 1.20.4 (protocol 765)
+                    LOGGER.info("*** [BACKEND->PROXY] Player {}: JOIN GAME (0x29) packet forwarded to client. Triggering client packet buffer flush. ***",
+                                 playerSession.getPlayer().getUsername());
+                    playerSession.onBackendJoinGameForwarded(); // Corrected method name
+                } else if (packetId == 0x4B) { // Spawn Position
+                    LOGGER.debug("*** [BACKEND->PROXY] Player {}: SPAWN POSITION (0x4B) packet forwarded to client. ***", playerSession.getPlayer().getUsername());
+                } else if (packetId == 0x37) { // Player Abilities
+                    LOGGER.debug("*** [BACKEND->PROXY] Player {}: PLAYER ABILITIES (0x37) packet forwarded to client. ***", playerSession.getPlayer().getUsername());
                 }
+                // No 'else' needed here, packet is already forwarded. We only take special action for Join Game.
 
-
-                playerSession.sendToClient(packet.retain());
             } else {
                 // Handshake state or other unexpected state for backend connection after initial TCP connect.
                 LOGGER.warn("[{}] BackendForwardingHandler for {} received packet in unexpected backend state: {}. Releasing packet.",
